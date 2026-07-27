@@ -1,285 +1,343 @@
-Excellent. You've reached what I consider **Version 1.0** of the review architecture.
+This is where I'd change direction a little.
 
-You now have:
+So far we've been building **infrastructure**:
 
-* ✅ Clean model (`Page`)
-* ✅ Partial rendering
-* ✅ HTMX endpoint
-* ✅ HTMX navigation
-* ✅ No page refreshes
+* Page model
+* Partial templates
+* HTMX
+* Keyboard navigation
 
-From here, I think we should stop thinking of it as a "web page" and start thinking of it as a **desktop review application**.
+Those are foundations.
 
----
+Now I'd start building the **review workflow** itself.
 
-# Commit 5
+## My recommended roadmap
+
+I would **not** add Favorites, Delete, Rotate, etc. next.
+
+Instead, I'd make the reviewer **fast**.
+
+The biggest performance issue in the current code is that every click does this:
 
 ```text
-feat(review): add keyboard navigation
+Arrow →
+    ↓
+GET /review/content
+    ↓
+Scan()
+    ↓
+Walk filesystem
+    ↓
+Decode images
+    ↓
+Return page
 ```
 
-This is, by far, the feature users will appreciate the most.
-
-Once you've used left/right arrows to review 500 images, you'll never want to click buttons again.
+Even if it feels okay now, it's unnecessary work.
 
 ---
 
-# Philosophy
+# Phase 6 — Review Session
 
-I **don't** recommend doing this with HTMX triggers.
+This is the first feature I'd implement.
 
-Instead, use **15 lines of vanilla JavaScript**.
+Instead of rescanning the filesystem on every request:
 
-Why?
+```
+Review Session
 
-Because it's:
+ID: ab83f9
 
-* simpler
-* easier to debug
-* easier to extend
-* independent of HTMX internals
+Images
+    0
+    1
+    2
+    3
+    ...
+
+Current = 17
+
+MinSize = 200
+```
+
+Navigation becomes
+
+```
+Arrow →
+      ↓
+Current++
+      ↓
+Return image 18
+```
+
+No scan.
+
+No directory walk.
+
+Nearly instant.
 
 ---
 
-# Step 1
+## Why this matters
 
-Create
+Right now:
 
 ```
-web/static/js/review.js
+500 images
+
+Arrow Right
+
+Scan 500 files
+
+Arrow Right
+
+Scan 500 files
+
+Arrow Right
+
+Scan 500 files
 ```
 
-Contents:
+With a session:
 
-```javascript
-document.addEventListener("keydown", function (event) {
+```
+500 images
 
-    // Ignore typing in inputs
-    if (
-        event.target.tagName === "INPUT" ||
-        event.target.tagName === "TEXTAREA"
-    ) {
-        return;
-    }
+Arrow Right
 
-    if (event.key === "ArrowRight") {
+index++
 
-        const next = document.querySelector("#next-button");
+Arrow Right
 
-        if (next && !next.disabled) {
-            next.click();
-        }
-    }
+index++
 
-    if (event.key === "ArrowLeft") {
+Arrow Right
 
-        const prev = document.querySelector("#prev-button");
-
-        if (prev && !prev.disabled) {
-            prev.click();
-        }
-    }
-
-});
+index++
 ```
 
-No HTMX API.
-
-Just clicks the buttons.
+Huge difference.
 
 ---
 
-# Step 2
+# This also unlocks...
 
-Give the buttons IDs.
+Once a session exists, every future feature becomes easier.
 
-Previous
-
-```templ
-<button
-    id="prev-button"
-    class="button"
-```
-
-Next
-
-```templ
-<button
-    id="next-button"
-    class="button is-primary"
-```
-
-Nothing else changes.
-
----
-
-# Step 3
-
-Load the script.
-
-In
+## Delete
 
 ```
-layout.templ
-```
-
-right after
-
-```html
-<script src="/static/js/htmx.min.js"></script>
-```
-
-add
-
-```html
-<script src="/static/js/review.js"></script>
-```
-
-That's it.
-
----
-
-# Result
-
-Now
-
-```
-←
-```
-
-clicks Previous.
-
-```
-→
-```
-
-clicks Next.
-
-Since HTMX is already attached to the buttons,
-
-the keyboard automatically performs HTMX requests.
-
-No extra code.
-
----
-
-# Why I prefer this
-
-Many HTMX examples use
-
-```html
-hx-trigger="keyup[key=='ArrowRight']"
-```
-
-I don't.
-
-Because six months from now you'll want
-
-```
-Space
-
-Home
-
-End
-
 Delete
 
-K
+remove Images[current]
 
-F
-
-R
-
+show Images[current]
 ```
 
-Using JS makes that trivial.
+No rescan.
 
 ---
 
-# The next enhancement
-
-Now we're getting into the "fast reviewer" workflow.
-
-I'd implement this immediately afterward.
+## Keep
 
 ```
-← Previous
-
 Keep
 
-Delete
-
-Favorite
-
-Skip
-
-Next →
+Current++
 ```
-
-where
-
-```
-K
-```
-
-=
-
-Keep
-
-```
-D
-```
-
-=
-
-Delete
-
-```
-F
-```
-
-=
-
-Favorite
-
-```
-Space
-```
-
-=
-
-Next
-
-```
-← →
-```
-
-=
-
-Navigate
-
-After about ten minutes, you'll stop using the mouse almost entirely.
 
 ---
 
-# One improvement I'd make now
+## Favorite
 
-There's one architectural enhancement I'd introduce **before** adding Keep/Delete actions, because it will make every future feature simpler.
+```
+Images[current].Favorite = true
+```
 
-Right now, every `Next` or `Previous` request calls `Scan()`, rescanning the image directory on every navigation. That works for development, but it won't scale well to thousands of images.
+---
 
-Instead, I'd introduce a `Session` (or `ReviewState`) that stores the current slice of images in memory:
+## Undo
 
-```go
+```
+History stack
+
+Undo
+```
+
+---
+
+## Random
+
+```
+Current = rand.Intn(...)
+```
+
+---
+
+## Slideshow
+
+```
+Current++
+
+every 3 seconds
+```
+
+---
+
+# I'd introduce a new package
+
+```
+internal/
+
+reviewsession/
+
+    session.go
+    store.go
+```
+
+Very small.
+
+```
 type Session struct {
+
     Images []Image
+
+    Current int
+
     MinSize int
+
 }
 ```
 
-Then:
+---
 
-* `/review` creates or refreshes the session.
-* `/review/content` just indexes into the existing `Images` slice instead of rescanning the filesystem.
+Then
 
-That change will make navigation effectively instantaneous, and it also lays the groundwork for features like **Keep**, **Delete**, **Favorite**, and **Undo** without constantly rebuilding the review list. It's the natural next architectural step after keyboard navigation.
+```
+type Store struct {
+
+    sessions map[string]*Session
+
+}
+```
+
+About 100 lines of Go.
+
+---
+
+# Phase 7
+
+Once that's working:
+
+```
+Space
+
+Next
+
+Delete
+
+Keep
+
+Favorite
+```
+
+Keyboard only.
+
+---
+
+# Phase 8
+
+```
+Undo
+```
+
+This is surprisingly important.
+
+People make mistakes.
+
+Undo makes them fearless.
+
+---
+
+# Phase 9
+
+Actually move files.
+
+```
+keep/
+
+reject/
+
+favorite/
+```
+
+HTMX POST
+
+Move file
+
+Return next image
+
+Never refresh.
+
+---
+
+# Phase 10
+
+Metadata sidebar
+
+```
+Filename
+
+Resolution
+
+File size
+
+Aspect ratio
+
+Created
+
+Hash
+
+Directory
+```
+
+---
+
+# Phase 11
+
+Bulk mode
+
+```
+4 images
+
+8 images
+
+16 images
+```
+
+Like Lightroom.
+
+---
+
+# My recommendation
+
+If this were **my** project, I'd spend the next few commits on one thing only:
+
+> **Eliminate the filesystem scan from Previous/Next navigation.**
+
+Everything else becomes dramatically easier after that.
+
+It's the point where the project stops being "a web app that displays images" and starts behaving like a native image reviewer.
+
+---
+
+## I'd slightly adjust the roadmap
+
+I'd order the next milestones like this:
+
+1. **Review sessions** (cache the image list in memory instead of rescanning).
+2. **Keep/Delete actions** (operate on the cached list and advance automatically).
+3. **Undo** (maintain a small action history in the session).
+4. **Persistent review state** (so refreshing the browser returns you to the same image).
+
+That sequence gives you a fast, resilient review tool before adding more specialized features like favorites, rotation, or multi-image grids. It also minimizes rework because the session layer becomes the foundation for nearly every action you'll add afterward.
