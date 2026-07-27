@@ -1,0 +1,585 @@
+
+
+
+
+
+handlers(6).go
+File
+
+review(3).templ
+File
+
+page(1).go
+File
+
+scan(3).go
+File
+
+main(13).go
+File
+type Page struct {
+	Result
+
+	Current int
+}
+and feel free to introduce
+type ReviewPage struct {
+    Images       []Image
+    CurrentIndex int
+    Current      Image
+
+    HasNext bool
+    HasPrev bool
+
+    Total int
+}
+and include where this goes in the code complete solution
+
+
+layout(9).templ
+File
+
+
+review(4).templ
+File
+
+
+review(5).templ
+File
+I restored the git to last known working version.  what other file(s) do you need
+
+Excellent. This is exactly where I wanted us to be.
+
+At this point the project is in a good state:
+
+✅ Review model knows how to navigate.
+
+✅ Review page is split into a full page and a content partial.
+
+✅ No behavioral changes.
+
+✅ Clean commit history.
+
+Now we can add HTMX without disturbing anything else.
+
+Commit 3
+refactor(review): add HTMX content endpoint
+The goal is:
+
+GET /review
+returns
+
+layout
+
+    ReviewContent()
+while
+
+GET /review/content?current=17&min=200
+returns only
+
+ReviewContent()
+No layout.
+
+No page refresh.
+
+Step 1
+Refactor the duplicated Scan logic.
+
+Create a helper inside
+
+internal/review/handlers.go
+func (h *handler) loadPage(r *http.Request) (reviewmodel.Page, error) {
+	min := 100
+
+	if s := r.URL.Query().Get("min"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			min = v
+		}
+	}
+
+	current := 0
+
+	if s := r.URL.Query().Get("current"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v >= 0 {
+			current = v
+		}
+	}
+
+	result, err := Scan(h.imageDir, min)
+	if err != nil {
+		return reviewmodel.Page{}, err
+	}
+
+	if len(result.Images) == 0 {
+		current = 0
+	} else if current >= len(result.Images) {
+		current = len(result.Images) - 1
+	}
+
+	return reviewmodel.Page{
+		Result:  result,
+		Current: current,
+	}, nil
+}
+Notice that this also clamps invalid indexes.
+
+That saves us from crashes later.
+
+Step 2
+Your existing
+
+func (h *handler) home(...)
+becomes tiny.
+
+page, err := h.loadPage(r)
+if err != nil {
+    ...
+}
+
+err = reviewtpl.Review(page).Render(...)
+No Scan code remains here.
+
+Step 3
+Add another handler.
+
+func (h *handler) content(w http.ResponseWriter, r *http.Request) {
+
+	page, err := h.loadPage(r)
+	if err != nil {
+		h.log.Error("scan failed", "err", err)
+		http.Error(w, "scan failed", http.StatusInternalServerError)
+		return
+	}
+
+	err = reviewtpl.ReviewContent(page).Render(r.Context(), w)
+	if err != nil {
+		h.log.Error("render failed", "err", err)
+	}
+}
+Almost identical to home().
+
+The only difference is
+
+Review()
+vs
+
+ReviewContent()
+Step 4
+Register the endpoint.
+
+Current
+
+r.Get("/", h.home)
+becomes
+
+r.Get("/", h.home)
+r.Get("/content", h.content)
+Nothing else changes.
+
+What should work
+Open
+
+http://localhost:8080/review?min=200
+Exactly the same page.
+
+Then open
+
+http://localhost:8080/review/content?min=200
+You should not see the page header or layout.
+
+You should see only
+
+review-panel
+This is an excellent debugging endpoint.
+
+Why this is important
+When HTMX does
+
+hx-get="/review/content?current=12"
+the browser literally performs the exact request you just tested manually.
+
+That makes debugging easy because every HTMX request is also a normal URL you can visit directly.
+
+Small improvement
+While you're editing loadPage(), I'd also preserve the current min value automatically in the page model (which it already does through Result.MinSize). That means every subsequent HTMX request can include both current and min, so changing images won't accidentally reset the filter.
+
+If this compiles and /review/content?... returns just the review panel, we're ready for Commit 4, where the Previous/Next buttons become live HTMX navigation with only a few template changes.
+
+
+
+handlers(7).go
+File
+does this look correct?
+
+
+reviewcontent.templ
+File
+don't have prev or next buttons
+
+Today 9:19 AM
+
+reviewcontent(1).templ
+File
+templ generate
+(✗) Error [ error=failed to generate code for "/Users/boomer/dev/go/media-manager/web/templates/review/reviewcontent.templ": /Users/boomer/dev/go/media-manager/web/templates/review/reviewcontent.templ parsing error: <div>: close tag not found: line 79, col 0 ]
+(✓) Post-generation event received, processing... [ updates=0 needsRestart=true needsBrowserReload=true ]
+(✗) Command failed: generation completed with 1 errors
+
+Stopped thinking
+Found it immediately.
+
+You're simply missing closing tags at the end of the template.
+
+Right now your file ends with:
+
+                <div class="level-right">
+                    <p>
+                        Image
+                        { fmt.Sprintf("%d", page.Position()) }
+                        /
+                        { fmt.Sprintf("%d", page.Count()) }
+                    </p>
+                </div>
+        </div>
+        }
+Notice what's missing:
+
+the closing </div> for review-panel
+
+the else branch that was originally there
+
+the closing } for the if
+
+the closing } for the template
+
+Replace everything from:
+
+<div class="level mt-5">
+to the end of the file with this:
+
+<div class="level mt-5">
+
+    <div class="level-left">
+        <div class="buttons">
+
+            <button
+                class="button"
+                hx-get={ page.PrevURL() }
+                hx-target="#review-panel"
+                hx-swap="outerHTML"
+                disabled?={ !page.HasPrev() }>
+
+                ← Previous
+
+            </button>
+
+            <button
+                class="button is-link"
+                hx-get={ page.NextURL() }
+                hx-target="#review-panel"
+                hx-swap="outerHTML"
+                disabled?={ !page.HasNext() }>
+
+                Next →
+
+            </button>
+
+        </div>
+    </div>
+
+    <div class="level-right">
+        <p>
+            Image
+            { fmt.Sprintf("%d", page.Position()) }
+            /
+            { fmt.Sprintf("%d", page.Count()) }
+        </p>
+    </div>
+
+</div>
+
+        } else {
+
+            <article class="message is-success">
+                <div class="message-body">
+                    No matching images.
+                </div>
+            </article>
+
+        }
+
+    </div>
+
+}
+That balances every opening tag:
+
+✅ review-panel
+
+✅ level
+
+✅ if
+
+✅ templ
+
+One more thing I noticed
+Your image is referenced as:
+
+src={ img.URL }
+Earlier, I was guessing the field names. If this compiles, great. If the compiler complains that Image has no field URL, let me know what fields your Image struct contains (or paste internal/reviewmodel/model.go). We can fix that in a minute.
+
+After fixing the template
+Run:
+
+templ generate
+go build ./...
+If it compiles, we can move on to making the Next button actually advance through your images. If it doesn't, paste the new compiler error—at this point we're very close.
+
+
+Today 1:16 PM
+everything is compiling
+
+Fantastic. You're at the point where the architecture is in place. Now let's verify the HTMX behavior and, if necessary, finish the last wiring.
+
+Step 1: Is HTMX loaded?
+Open your browser's Developer Tools and run:
+
+typeof htmx
+You should get:
+
+object
+If you get:
+
+undefined
+then HTMX isn't being loaded, and the buttons will perform no action.
+
+Verify your base layout includes:
+
+<script src="/static/js/htmx.min.js"></script>
+just before </body>.
+
+Step 2: Inspect the rendered button
+Right-click the Next button and choose Inspect.
+
+You should see something similar to:
+
+<button
+    class="button is-link"
+    hx-get="/review/content?current=1&min=200"
+    hx-target="#review-panel"
+    hx-swap="outerHTML">
+    Next →
+</button>
+If those hx-* attributes are missing, the template wasn't regenerated or the wrong template is being rendered.
+
+Step 3: Watch the Network tab
+Open the Network tab in DevTools.
+
+Click Next.
+
+You should see a request like:
+
+GET /review/content?current=1&min=200
+There are three possibilities:
+
+A. No request at all
+HTMX isn't loaded.
+
+B. Request returns 404
+The /review/content route isn't mounted correctly.
+
+C. Request returns 200
+Perfect. The server is working.
+
+Step 4: Test the endpoint directly
+Visit:
+
+http://localhost:8080/review/content?current=1&min=200
+You should see only the review panel (no page header or refresh form), and it should display the second image if you have more than one.
+
+If it always shows the first image, we'll inspect ReviewContent() or Page.Image() next.
+
+One thing I strongly recommend next
+Once the HTMX navigation is confirmed, I'd make a small usability improvement before adding keyboard shortcuts.
+
+Instead of only showing "Previous" and "Next", let's display something like:
+
+← Previous        Image 5 / 143        Next →
+and disable the buttons at the ends of the list (which your model already supports with HasPrev() and HasNext()).
+
+After that, the next feature I'd add is keyboard navigation:
+
+← moves to the previous image
+
+→ moves to the next image
+
+Because you've already split the page into a ReviewContent partial and added the content endpoint, that enhancement will only require a tiny amount of JavaScript or HTMX event handling and won't require any changes to the server.
+
+
+Today 2:39 PM
+One thing I strongly recommend next
+
+Once the HTMX navigation is confirmed, I'd make a small usability improvement before adding keyboard shortcuts.
+
+Instead of only showing "Previous" and "Next", let's display something like:
+
+← Previous        Image 5 / 143        Next →
+
+and disable the buttons at the ends of the list (which your model already supports with HasPrev() and HasNext()).
+show me how to implement this
+
+This is actually one of the easiest improvements because you've already done all the hard work. We don't need to touch the handlers or the model—just the template.
+
+I'd use Bulma's level component, which is designed for exactly this kind of toolbar.
+
+Replace your current navigation block
+Find this section in reviewcontent.templ:
+
+<div class="level mt-5">
+
+    <div class="level-left">
+        <div class="buttons">
+
+            <button
+                class="button"
+                hx-get={ page.PrevURL() }
+                hx-target="#review-panel"
+                hx-swap="outerHTML"
+                disabled?={ !page.HasPrev() }>
+
+                ← Previous
+
+            </button>
+
+            <button
+                class="button is-link"
+                hx-get={ page.NextURL() }
+                hx-target="#review-panel"
+                hx-swap="outerHTML"
+                disabled?={ !page.HasNext() }>
+
+                Next →
+
+            </button>
+
+        </div>
+    </div>
+
+    <div class="level-right">
+        <p>
+            Image
+            { fmt.Sprintf("%d", page.Position()) }
+            /
+            { fmt.Sprintf("%d", page.Count()) }
+        </p>
+    </div>
+
+</div>
+Replace it with this:
+
+<div class="level mt-5">
+
+    <!-- Previous button -->
+    <div class="level-left">
+        <div class="level-item">
+            <button
+                class="button"
+                hx-get={ page.PrevURL() }
+                hx-target="#review-panel"
+                hx-swap="outerHTML"
+                disabled?={ !page.HasPrev() }>
+
+                ← Previous
+
+            </button>
+        </div>
+    </div>
+
+    <!-- Counter -->
+    <div class="level-item has-text-centered">
+
+        <div>
+
+            <p class="heading">
+                Reviewing
+            </p>
+
+            <p class="title is-5">
+                { fmt.Sprintf("%d", page.Position()) }
+                /
+                { fmt.Sprintf("%d", page.Count()) }
+            </p>
+
+        </div>
+
+    </div>
+
+    <!-- Next button -->
+    <div class="level-right">
+        <div class="level-item">
+            <button
+                class="button is-link"
+                hx-get={ page.NextURL() }
+                hx-target="#review-panel"
+                hx-swap="outerHTML"
+                disabled?={ !page.HasNext() }>
+
+                Next →
+
+            </button>
+        </div>
+    </div>
+
+</div>
+Why this is nicer
+Instead of
+
+Previous    Next
+
+Image 17 / 682
+you'll get
+
+← Previous        Reviewing
+                   17 / 682          Next →
+The counter stays centered regardless of button widths, and the layout remains stable as you navigate.
+
+Make the disabled state more obvious
+Bulma dims disabled buttons automatically, but you can improve the visual feedback by changing the Next button style.
+
+Instead of:
+
+class="button is-link"
+I'd use:
+
+class="button is-primary"
+The active button stands out more clearly, while the disabled button fades.
+
+Add a filename underneath
+Since you're reviewing media, I almost always want to know which file I'm looking at.
+
+Right below the toolbar add:
+
+<p class="has-text-centered has-text-grey mt-2">
+
+    { page.Image().Name }
+
+</p>
+or, if Name isn't the field in your model, use the appropriate filename field.
+
+That gives you:
+
+← Previous      17 / 682      Next →
+
+north_wind_calls_017.webp
+which is very helpful when deciding whether to keep or delete an image.
+
+What I'd do next (before keyboard shortcuts)
+The next feature I'd implement is a review toolbar that grows with the application:
+
+┌───────────────────────────────────────────────────────────────┐
+│ ← Previous      17 / 682      Next →                         │
+├───────────────────────────────────────────────────────────────┤
+│ Keep │ Delete │ Favorite │ Rotate │ Open Folder │ Reveal     │
+└───────────────────────────────────────────────────────────────┘
+Because your #review-panel is already being swapped by HTMX, each of those actions can be an hx-post that updates the panel in place. You won't need to restructure the application again—the foundation you've built is exactly what those future features will use.
+
+
