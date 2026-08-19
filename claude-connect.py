@@ -24,13 +24,7 @@ SRC_ATTRS = [
     "srcset",
     "src",
 ]
-MODEL_URLS = [
-    "https://www.curvyerotic.com/model/remida",
-    "https://www.curvyerotic.com/model/lexa-raider",
-    "https://www.curvyerotic.com/model/raquel",
-    "https://www.curvyerotic.com/model/amber-nvg",
-    "https://www.freexcafe.com/erotica/metart5/a5yecrdgs/index.php",
-]
+
 
 # SEEN_FILE = Path("seen-urls.txt")
 # IMG_SRC_FILE = Path("img-src.txt")
@@ -193,12 +187,12 @@ def bs(session):
 
     with Path("a-href.txt").open("a") as fout:
         for link in sorted(links):
-            if "freexcafe" in link:
+            if "rdcpix" in link:
                 fout.write(link + "\n")
 
     with Path("img-src.txt").open("a") as fout:
         for src in sorted(imgs):
-            if "freexcafe" in src:
+            if "rdcpix" in src:
                 fout.write(src + "\n")
 
 
