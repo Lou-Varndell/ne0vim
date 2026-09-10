@@ -1,11 +1,11 @@
-// module main
+module fyne-image-browser
 
-// go 1.27.0
-module go-photo
+go 1.27
 
-go 1.23.2
-
-require fyne.io/fyne/v2 v2.8.1
+require (
+	fyne.io/fyne/v2 v2.8.1
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
+)
 
 require (
 	fyne.io/systray v1.12.3-0.20260810170012-af4e8e793ec4 // indirect
@@ -29,7 +29,6 @@ require (
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
-	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/nicksnyder/go-i18n/v2 v2.5.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rymdport/portal v0.4.2 // indirect
