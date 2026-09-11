@@ -5,11 +5,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"image"
+	_ "image/gif"
 	"image/jpeg"
+	_ "image/png"
 	"os"
 	"path/filepath"
 
 	"github.com/nfnt/resize"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
 )
 
 type Cache struct {

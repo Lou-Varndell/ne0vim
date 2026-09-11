@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"os"
@@ -8,27 +9,27 @@ import (
 	"runtime"
 	"sync"
 
-	"fyne-image-browser/internal/images"
+	"photo-browser/internal/filedialog"
+	"photo-browser/internal/images"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
 type Browser struct {
-	win       fyne.Window
-	root      *fyne.Container
-	grid      *fyne.Container
-	scroll    *container.Scroll
-	path      *widget.Entry
-	status    *widget.Label
-	thumbSize int
-	columns   int
-	items     []images.Item
-	cache     *images.Cache
+	win              fyne.Window
+	root             *fyne.Container
+	grid             *fyne.Container
+	scroll           *container.Scroll
+	path             *widget.Entry
+	status           *widget.Label
+	thumbSize        int
+	items            []images.Item
+	cache            *images.Cache
+	lastOpenLocation fyne.ListableURI
 
 	mu sync.Mutex
 }
@@ -67,7 +68,6 @@ func NewBrowser(dir string) *Browser {
 
 	b := &Browser{
 		thumbSize: 150,
-		columns:   7,
 		cache:     cache,
 	}
 
@@ -77,21 +77,20 @@ func NewBrowser(dir string) *Browser {
 	b.status = widget.NewLabel("")
 
 	choose := widget.NewButton("Choose Directory", func() {
-		d := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-			if err != nil || uri == nil {
-				return
-			}
-
-			_ = b.LoadDirectory(uri.Path())
-		}, b.win)
-		d.Show()
+		b.OpenFolderDialog()
 	})
 
 	refresh := widget.NewButton("Refresh", func() {
-		_ = b.LoadDirectory(b.path.Text)
+		_ = b.LoadDirectory(context.Background(), b.path.Text)
 	})
 
-	b.grid = container.NewGridWithColumns(b.columns)
+	sampleLabel := widget.NewLabel("Wg")
+	cellHeight := float32(b.thumbSize) + theme.Padding() + sampleLabel.MinSize().Height
+
+	b.grid = container.New(&ThumbnailGridLayout{
+		CellWidth:  float32(b.thumbSize),
+		CellHeight: cellHeight,
+	})
 	b.scroll = container.NewScroll(b.grid)
 
 	toolbar := container.NewBorder(
@@ -117,10 +116,38 @@ func (b *Browser) InitialSize() fyne.Size {
 	return fyne.NewSize(1200, 850)
 }
 
-func (b *Browser) LoadDirectory(dir string) error {
-	items, err := images.Scan(dir)
+// OpenFolderDialog shows the shared folder-picker dialog (breadcrumbs,
+// type-ahead, hidden-file toggle, go-to-path) and loads whatever directory
+// the user selects. It is the single implementation behind every entry
+// point that lets the user choose a folder, so they all behave identically.
+func (b *Browser) OpenFolderDialog() {
+	d := filedialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+		if err != nil || lu == nil {
+			return
+		}
+
+		b.lastOpenLocation = lu
+		_ = b.LoadDirectory(context.Background(), lu.Path())
+	}, b.win)
+
+	if b.lastOpenLocation != nil {
+		d.SetLocation(b.lastOpenLocation)
+	}
+
+	d.Resize(fyne.NewSize(900, 600))
+	d.Show()
+}
+
+// LoadDirectory scans dir for images and updates the browser's UI with the
+// result. It performs the (potentially slow) directory scan on the calling
+// goroutine, but marshals every widget update through fyne.Do, so it is
+// safe to call from either a UI callback or a goroutine the caller started.
+func (b *Browser) LoadDirectory(ctx context.Context, dir string) error {
+	items, err := images.Scan(ctx, dir)
 	if err != nil {
-		b.status.SetText(err.Error())
+		fyne.Do(func() {
+			b.status.SetText(err.Error())
+		})
 		return err
 	}
 
@@ -128,9 +155,11 @@ func (b *Browser) LoadDirectory(dir string) error {
 	b.items = items
 	b.mu.Unlock()
 
-	b.path.SetText(dir)
-	b.status.SetText(fmt.Sprintf("%d images", len(items)))
-	b.rebuild()
+	fyne.Do(func() {
+		b.path.SetText(dir)
+		b.status.SetText(fmt.Sprintf("%d images", len(items)))
+		b.rebuild()
+	})
 	return nil
 }
 
@@ -195,28 +224,7 @@ func (b *Browser) openViewer(index int) {
 	v.Show()
 }
 
-// Call this from resize handling if desired. It keeps the grid responsive.
-func (b *Browser) SetGridColumns(columns int) {
-	if columns < 1 {
-		columns = 1
-	}
-	if columns > 12 {
-		columns = 12
-	}
-	b.columns = columns
-	b.rebuild()
-}
-
-func ColumnsForWidth(width float32, thumb float32) int {
-	n := int(width / thumb)
-	if n < 1 {
-		n = 1
-	}
-	return n
-}
-
 var _ = image.Point{}
 var _ = filepath.Separator
 var _ = os.ErrNotExist
 var _ = runtime.GOOS
-var _ = layout.NewSpacer

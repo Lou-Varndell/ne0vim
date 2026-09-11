@@ -6,8 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
-	"fyne-image-browser/internal/images"
+	"photo-browser/internal/images"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -58,6 +59,10 @@ func newViewer(parent fyne.Window, items []images.Item, index int) *viewer {
 			v.win.Close()
 		case fyne.KeyReturn, fyne.KeySpace:
 			openExternal(v.items[v.index].Path)
+		case fyne.KeyDelete, fyne.KeyBackspace:
+			if err := v.moveCurrentToTrash(); err != nil {
+				fmt.Printf("failed to move image to Trash: %v\n", err)
+			}
 		}
 	})
 
@@ -89,15 +94,70 @@ func (v *viewer) move(delta int) {
 	v.update()
 }
 
+func (v *viewer) moveCurrentToTrash() error {
+	if runtime.GOOS != "darwin" || len(v.items) == 0 {
+		return nil
+	}
+
+	path := v.items[v.index].Path
+
+	script := `
+on run argv
+	set theFile to POSIX file (item 1 of argv) as alias
+	tell application "Finder" to delete theFile
+end run
+`
+
+	cmd := exec.Command("osascript", "-e", script, path)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	v.items = append(v.items[:v.index], v.items[v.index+1:]...)
+
+	if len(v.items) == 0 {
+		v.win.Close()
+		return nil
+	}
+
+	if v.index >= len(v.items) {
+		v.index = len(v.items) - 1
+	}
+
+	v.image.File = v.items[v.index].Path
+	v.image.Resource = nil
+	v.image.Refresh()
+	v.update()
+
+	return nil
+}
+
 func (v *viewer) update() {
 	item := v.items[v.index]
-	info, err := os.Stat(item.Path)
-	if err == nil {
-		v.info.SetText(fmt.Sprintf("%d / %d    %s    %s",
-			v.index+1, len(v.items), item.Name, formatBytes(info.Size())))
-	} else {
-		v.info.SetText(fmt.Sprintf("%d / %d    %s", v.index+1, len(v.items), item.Name))
+	parts := []string{fmt.Sprintf("%d / %d", v.index+1, len(v.items)), item.Name}
+
+	if info, err := os.Stat(item.Path); err == nil {
+		parts = append(parts, formatBytes(info.Size()))
 	}
+	if w, h, err := imageDimensions(item.Path); err == nil {
+		parts = append(parts, fmt.Sprintf("%d x %d", w, h))
+	}
+
+	v.info.SetText(strings.Join(parts, "    "))
+}
+
+func imageDimensions(path string) (width, height int, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return 0, 0, err
+	}
+	return cfg.Width, cfg.Height, nil
 }
 
 func formatBytes(n int64) string {
@@ -125,5 +185,3 @@ func openExternal(path string) {
 	}
 	_ = cmd.Start()
 }
-
-var _ = image.Point{}

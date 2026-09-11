@@ -1,6 +1,7 @@
 package images
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +24,11 @@ func IsImage(path string) bool {
 	return extensions[strings.ToLower(filepath.Ext(path))]
 }
 
-func Scan(dir string) ([]Item, error) {
+func Scan(ctx context.Context, dir string) ([]Item, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read directory: %w", err)
