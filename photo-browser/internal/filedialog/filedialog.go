@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"photo-browser/internal/images"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
@@ -156,7 +158,6 @@ func (f *FileDialog) Show() {
 	}
 	f.setLocation(start)
 	f.pop.Show()
-	f.focusList()
 }
 
 func (f *FileDialog) focusList() {
@@ -297,9 +298,10 @@ func (f *FileDialog) showLoading() {
 // once while building the listing, so callers like handleSelection and
 // findTypeAhead don't need to re-probe the filesystem per keystroke/click.
 type dirEntry struct {
-	uri      fyne.URI
-	isDir    bool
-	listable fyne.ListableURI // non-nil when isDir is true
+	uri        fyne.URI
+	isDir      bool
+	listable   fyne.ListableURI // non-nil when isDir is true
+	imageCount int              // number of images directly inside; only set in folder mode
 }
 
 // buildDirectoryData filters and sorts a directory listing. It touches no
@@ -318,7 +320,11 @@ func buildDirectoryData(location fyne.URI, entries []fyne.URI, folderMode, showH
 	data := make([]dirEntry, 0, len(entries)+1)
 	if parent != nil && parent.String() != location.String() {
 		if parentListable, err := storage.ListerForURI(parent); err == nil {
-			data = append(data, dirEntry{uri: parent, isDir: true, listable: parentListable})
+			entry := dirEntry{uri: parent, isDir: true, listable: parentListable}
+			if folderMode {
+				entry.imageCount = countImages(parentListable)
+			}
+			data = append(data, entry)
 		}
 	}
 
@@ -331,7 +337,7 @@ func buildDirectoryData(location fyne.URI, entries []fyne.URI, folderMode, showH
 		isDir := listErr == nil
 		if folderMode {
 			if isDir {
-				data = append(data, dirEntry{uri: listable, isDir: true, listable: listable})
+				data = append(data, dirEntry{uri: listable, isDir: true, listable: listable, imageCount: countImages(listable)})
 			}
 			continue
 		}
@@ -370,6 +376,17 @@ func buildDirectoryData(location fyne.URI, entries []fyne.URI, folderMode, showH
 	return data
 }
 
+// countImages returns the number of images directly inside u, or 0 if the
+// count can't be determined (e.g. permission denied) — such folders simply
+// show no count rather than blocking the listing on an error.
+func countImages(u fyne.URI) int {
+	count, err := images.CountImages(u.Path())
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
 func (f *FileDialog) rebuildList() {
 	if f.listHost == nil {
 		return
@@ -402,9 +419,13 @@ func (f *FileDialog) rebuildList() {
 		if !ok {
 			return
 		}
-		uri := f.data[id].uri
-		icon.SetURI(uri)
-		label.SetText(uri.Name())
+		entry := f.data[id]
+		icon.SetURI(entry.uri)
+		name := entry.uri.Name()
+		if f.folderMode {
+			name = fmt.Sprintf("%s  (%d images)", name, entry.imageCount)
+		}
+		label.SetText(name)
 	}
 	f.list.OnSelected = func(id widget.ListItemID) {
 		f.handleSelection(int(id))

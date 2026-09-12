@@ -8,13 +8,14 @@ import (
 	"sort"
 	"sync"
 
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+
 	_ "golang.org/x/image/bmp"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -26,7 +27,10 @@ import (
 	"image-browser/internal/trash"
 )
 
-const ThumbnailSize float32 = 400
+const (
+	ThumbnailSize float32 = 150
+	ThumbnailGap  float32 = 2
+)
 
 const (
 	thumbnailWorkers   = 4
@@ -39,15 +43,17 @@ const (
 // The single-image view displays images at their original pixel dimensions
 // (1:1), inside a scroll container.
 type Browser struct {
-	app          fyne.App
-	win          fyne.Window
-	root         string
-	pattern      string
-	images       []string
-	index        int
-	startGrid    bool
-	groupDirs    bool
-	trashEnabled bool
+	app           fyne.App
+	win           fyne.Window
+	root          string
+	pattern       string
+	images        []string
+	index         int
+	startGrid     bool
+	groupDirs     bool
+	trashEnabled  bool
+	previewDir    string
+	previewImages []string
 
 	single fyne.CanvasObject
 	grid   fyne.CanvasObject
@@ -276,26 +282,137 @@ func (b *Browser) buildSingleView() fyne.CanvasObject {
 }
 
 func (b *Browser) buildGridView() fyne.CanvasObject {
-	// Keep the grid as a single virtualized GridWrap.  Creating one GridWrap
-	// per directory and stacking them caused Fyne's layout to reserve space
-	// for multiple virtualized grids, which could appear as an empty second pane.
+	if b.previewDir != "" {
+		return b.buildDirectoryView()
+	}
+	if b.groupDirs {
+		return b.buildGroupedGridView()
+	}
+
 	paths := b.gridPaths()
 	grid := b.newThumbnailGrid(paths)
 
-	var title string
-	if b.groupDirs {
-		dirs := make(map[string]struct{})
-		for _, p := range paths {
-			dirs[filepath.Dir(p)] = struct{}{}
+	header := widget.NewLabel(fmt.Sprintf("%d images", len(paths)))
+	header.Alignment = fyne.TextAlignCenter
+
+	return container.NewBorder(
+		header,
+		b.reviewToolbar(),
+		nil,
+		nil,
+		container.NewVScroll(grid),
+	)
+}
+
+// buildGroupedGridView renders one section per parent directory. Each section
+// has a heading, an Open Folder button, and exactly one thumbnail row. The row
+// shows only the thumbnails that fit in the available width; it never creates
+// a nested horizontal scroll area.
+func (b *Browser) buildGroupedGridView() fyne.CanvasObject {
+	groups := b.groupedPaths()
+	content := container.NewVBox()
+
+	for _, group := range groups {
+		heading := widget.NewLabelWithStyle(
+			fmt.Sprintf("%s   (%d images)", group.dir, len(group.paths)),
+			fyne.TextAlignLeading,
+			fyne.TextStyle{Bold: true},
+		)
+
+		open := widget.NewButton("Open Folder →", func(group imageGroup) func() {
+			return func() { b.openDirectoryPreview(group.dir, group.paths) }
+		}(group))
+		header := container.NewBorder(nil, nil, nil, open, heading)
+
+		row := container.New(&PreviewRowLayout{
+			CellWidth:  ThumbnailSize,
+			CellHeight: thumbnailCellHeight(),
+			Gap:        ThumbnailGap,
+		})
+
+		for _, path := range group.paths {
+			path := path
+			t := newThumbnailTemplate()
+			t.setPath(path, false)
+			t.onTap = func() { b.openImage(path) }
+			row.Add(t)
+			b.loadThumbnailAsync(t, path)
 		}
-		title = fmt.Sprintf("%d images — %d directories", len(paths), len(dirs))
-	} else {
-		title = fmt.Sprintf("%d images", len(paths))
+
+		content.Add(container.NewVBox(
+			header,
+			row,
+			widget.NewSeparator(),
+		))
 	}
 
-	header := widget.NewLabel(title)
+	return container.NewBorder(
+		nil,
+		b.reviewToolbar(),
+		nil,
+		nil,
+		container.NewVScroll(content),
+	)
+}
+
+type imageGroup struct {
+	dir   string
+	paths []string
+}
+
+func (b *Browser) groupedPaths() []imageGroup {
+	paths := append([]string(nil), b.images...)
+	sort.Slice(paths, func(i, j int) bool {
+		di, dj := filepath.Dir(paths[i]), filepath.Dir(paths[j])
+		if di != dj {
+			return di < dj
+		}
+		return paths[i] < paths[j]
+	})
+
+	groups := make([]imageGroup, 0)
+	for _, path := range paths {
+		dir := filepath.Dir(path)
+		if len(groups) == 0 || groups[len(groups)-1].dir != dir {
+			groups = append(groups, imageGroup{dir: dir})
+		}
+		groups[len(groups)-1].paths = append(groups[len(groups)-1].paths, path)
+	}
+	return groups
+}
+
+// openDirectoryPreview drills into one directory using the images already
+// discovered for that directory. No additional scan is needed.
+func (b *Browser) openDirectoryPreview(dir string, paths []string) {
+	b.previewDir = dir
+	b.previewImages = append([]string(nil), paths...)
+	b.showGrid()
+}
+
+// buildDirectoryView shows every image in the selected directory in the same
+// responsive thumbnail grid used by the flat view. The only navigation control
+// added is Back to Preview.
+func (b *Browser) buildDirectoryView() fyne.CanvasObject {
+	paths := append([]string(nil), b.previewImages...)
+	grid := b.newThumbnailGrid(paths)
+
+	back := widget.NewButton("← Back to Preview", func() {
+		b.previewDir = ""
+		b.previewImages = nil
+		b.showGrid()
+	})
+
+	header := widget.NewLabel(fmt.Sprintf("%s   (%d images)", b.previewDir, len(paths)))
 	header.Alignment = fyne.TextAlignCenter
-	return container.NewBorder(header, b.reviewToolbar(), nil, nil, grid)
+
+	toolbar := container.NewBorder(nil, nil, back, nil, header)
+	return container.NewBorder(
+		toolbar,
+		b.reviewToolbar(),
+		nil,
+		nil,
+		container.NewVScroll(grid),
+	)
 }
 
 func (b *Browser) gridPaths() []string {
@@ -304,8 +421,6 @@ func (b *Browser) gridPaths() []string {
 		return paths
 	}
 
-	// Preserve directory grouping order from the Python implementation while
-	// keeping one flat list for the virtualized grid.
 	sort.Slice(paths, func(i, j int) bool {
 		di, dj := filepath.Dir(paths[i]), filepath.Dir(paths[j])
 		if di != dj {
@@ -316,36 +431,26 @@ func (b *Browser) gridPaths() []string {
 	return paths
 }
 
-func (b *Browser) newThumbnailGrid(paths []string) *widget.GridWrap {
-	grid := widget.NewGridWrap(
-		func() int {
-			return len(paths)
-		},
-		func() fyne.CanvasObject {
-			return newThumbnailTemplate()
-		},
-		func(id widget.GridWrapItemID, item fyne.CanvasObject) {
-			if id < 0 || id >= len(paths) {
-				return
-			}
-			t, ok := item.(*thumbnail)
-			if !ok {
-				// newThumbnailTemplate is the only factory passed to
-				// NewGridWrap above, so it always produces *thumbnail.
-				panic(fmt.Sprintf("grid cell has unexpected type %T", item))
-			}
-			t.setPath(paths[id], b.groupDirs)
-			b.loadThumbnailAsync(t, paths[id])
-		},
-	)
-
-	grid.OnSelected = func(id widget.GridWrapItemID) {
-		if id >= 0 && id < len(paths) {
-			b.openImage(paths[id])
-		}
+func (b *Browser) newThumbnailGrid(paths []string) *fyne.Container {
+	objects := make([]fyne.CanvasObject, 0, len(paths))
+	for _, path := range paths {
+		path := path
+		t := newThumbnailTemplate()
+		t.setPath(path, false)
+		t.onTap = func() { b.openImage(path) }
+		objects = append(objects, t)
+		b.loadThumbnailAsync(t, path)
 	}
 
-	return grid
+	return container.New(&ThumbnailGridLayout{
+		CellWidth:  ThumbnailSize,
+		CellHeight: thumbnailCellHeight(),
+	}, objects...)
+}
+
+func thumbnailCellHeight() float32 {
+	label := widget.NewLabel("Wg")
+	return ThumbnailSize + label.MinSize().Height
 }
 
 func (b *Browser) loadThumbnailAsync(t *thumbnail, path string) {
@@ -380,6 +485,7 @@ type thumbnail struct {
 	path  string
 	image *canvas.Image
 	label *widget.Label
+	onTap func()
 }
 
 func newThumbnailTemplate() *thumbnail {
@@ -390,9 +496,16 @@ func newThumbnailTemplate() *thumbnail {
 	t.image.FillMode = canvas.ImageFillContain
 	t.image.SetMinSize(fyne.NewSize(ThumbnailSize, ThumbnailSize))
 	t.label.Alignment = fyne.TextAlignCenter
-	t.label.Wrapping = fyne.TextWrapWord
+	t.label.Wrapping = fyne.TextWrapOff
+	t.label.Truncation = fyne.TextTruncateEllipsis
 	t.ExtendBaseWidget(t)
 	return t
+}
+
+func (t *thumbnail) Tapped(*fyne.PointEvent) {
+	if t.onTap != nil {
+		t.onTap()
+	}
 }
 
 func (t *thumbnail) CreateRenderer() fyne.WidgetRenderer {

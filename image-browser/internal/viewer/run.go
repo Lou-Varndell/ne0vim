@@ -44,9 +44,9 @@ func Run(args []string) error {
 	// The standard flag package stops parsing when it encounters a positional
 	// argument. Extract the single pattern first, while preserving flags and
 	// their values for FlagSet to parse. This allows both
-	//   view chloe --move-all /path/to/Chloe
+	//   view [pattern] --move-all /path/to/my-dest
 	// and
-	//   view --move-all /path/to/Chloe chloe
+	//   view --move-all /path/to/my-dest [pattern]
 	// forms.
 	parseArgs := make([]string, 0, len(args))
 	var pattern string

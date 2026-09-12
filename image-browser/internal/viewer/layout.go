@@ -1,4 +1,4 @@
-package ui
+package viewer
 
 import "fyne.io/fyne/v2"
 
@@ -15,6 +15,7 @@ import "fyne.io/fyne/v2"
 type ThumbnailGridLayout struct {
 	CellWidth  float32
 	CellHeight float32
+	Gap        float32
 
 	rowCount int
 }
@@ -22,8 +23,8 @@ type ThumbnailGridLayout struct {
 // Layout positions objects in a wrapping grid whose column count is
 // recalculated from size.Width, so it adapts automatically on window resize.
 func (l *ThumbnailGridLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	columns := max(int(size.Width/l.CellWidth), 1)
-	cellWidth := size.Width / float32(columns)
+	columns := max(int((size.Width+l.Gap)/(l.CellWidth+l.Gap)), 1)
+	cellWidth := (size.Width - float32(columns-1)*l.Gap) / float32(columns)
 
 	rows := 0
 	for i, obj := range objects {
@@ -52,6 +53,7 @@ func (l *ThumbnailGridLayout) MinSize(_ []fyne.CanvasObject) fyne.Size {
 type PreviewRowLayout struct {
 	CellWidth  float32
 	CellHeight float32
+	Gap        float32
 }
 
 // Layout shows objects[:visible] positioned left to right at CellWidth
@@ -62,14 +64,14 @@ func (l *PreviewRowLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 		return
 	}
 
-	visible := min(max(int(size.Width/l.CellWidth), 1), len(objects))
+	visible := min(max(int((size.Width+l.Gap)/(l.CellWidth+l.Gap)), 1), len(objects))
 
 	for i, obj := range objects {
 		if i >= visible {
 			obj.Hide()
 			continue
 		}
-		obj.Move(fyne.NewPos(float32(i)*l.CellWidth, 0))
+		obj.Move(fyne.NewPos(float32(i)*(l.CellWidth+l.Gap), 0))
 		obj.Resize(fyne.NewSize(l.CellWidth, l.CellHeight))
 		obj.Show()
 	}

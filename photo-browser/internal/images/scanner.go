@@ -24,6 +24,23 @@ func IsImage(path string) bool {
 	return extensions[strings.ToLower(filepath.Ext(path))]
 }
 
+// CountImages returns the number of image files directly inside dir,
+// without recursing into subdirectories.
+func CountImages(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("read directory: %w", err)
+	}
+
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && IsImage(e.Name()) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func Scan(ctx context.Context, dir string) ([]Item, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
