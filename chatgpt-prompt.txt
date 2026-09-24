@@ -1,0 +1,38 @@
+here is my program structure. please ask for any files you need to read. i want to modify the submit button to use goquery to scan the urls in the textarea with the name text
+- verify that there is only one valid url per line
+- then scan each url for images no matter how deep you need to traverse to get the url for each image displayed on the page. an example would be a web page that had the urls of the full size displayed images as an img element, or a web page that has a thumbnail as the img element displayed and the full size image as an href anchor link.
+- i do not want to download anything at this point, i only want to collect a list of image urls to be displayed in a grid on a page.
+- the image grid display page can be the same page reloaded or a new page or pages
+- on the grid display page i want a dropdown with one url from the textarea per option
+- the image grid should only show images from that page
+- have a way to select all images or a subset of the images
+- save the image urls of the selected images for each page to a list and persist the list from url to url
+
+. 
+├── cmd
+│   └── server
+│       └── main.go
+├── go.mod
+├── go.sum
+├── internal
+│   └── handlers
+│       └── home.go
+├── Makefile
+├── tmp
+├── tools.go
+└── web
+    ├── static
+    │   ├── css
+    │   │   ├── app.css
+    │   │   └── bulma.min.css
+    │   └── js
+    │       └── htmx.min.js
+    └── templates
+        ├── layout
+        │   ├── layout_templ.go
+        │   └── layout.templ
+        └── pages
+            ├── home_templ.go
+            └── home.templ
+13 directories, 14 files
+
