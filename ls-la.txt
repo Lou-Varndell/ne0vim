@@ -1,6 +1,0 @@
-total 0
-drwxr-xr-x@  21 boomer  staff    672 Oct  3 10:32 112143/
-drwxr-xr-x@ 700 boomer  staff  22400 Oct  3 10:32 121845/
-drwxr-xr-x@   2 boomer  staff     64 Sep 27 17:44 174409/
-drwxr-xr-x@ 242 boomer  staff   7744 Oct  3 10:32 194327/
-drwxr-xr-x@ 693 boomer  staff  22176 Oct  3 10:32 200157/
