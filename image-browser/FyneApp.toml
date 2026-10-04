@@ -1,6 +1,0 @@
-[Details]
-Name = "Image Browser"
-ID = "com.example.image-browser"
-
-[Migrations]
-fyneDo = true
