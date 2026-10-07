@@ -1,0 +1,69 @@
+package catalog
+
+import "media-manager/internal/catalogmodel"
+
+// Breadcrumb renders the catalog's entire top bar: one segment per path
+// component (a <select> if it has sibling directories to jump sideways to,
+// otherwise a plain link), plus — if the current directory has
+// subdirectories — one trailing <select> for descending into one of them.
+// Together these fully replace a separate directory sidebar: the trailing
+// dropdown simply doesn't render when there's nothing to descend into.
+templ Breadcrumb(items []catalogmodel.Crumb, children []catalogmodel.Directory) {
+	<nav class="navbar is-dark" role="navigation" aria-label="breadcrumb navigation">
+		<div class="navbar-brand is-flex-wrap-wrap">
+			for i, c := range items {
+				if i > 0 {
+					<span class="navbar-item px-1">/</span>
+				}
+				<div class="navbar-item">
+					if len(c.Siblings) > 1 {
+						<div class="select is-small">
+							<select
+								name="dir"
+								hx-get="/catalog"
+								hx-target="#catalog-content"
+								hx-select="#catalog-content"
+								hx-swap="outerHTML"
+								hx-push-url="true"
+							>
+								for _, s := range c.Siblings {
+									<option value={ s.Path } selected?={ s.Path == c.Path }>{ s.Name }</option>
+								}
+							</select>
+						</div>
+					} else {
+						<a
+							hx-get={ "/catalog?dir=" + c.Path }
+							hx-target="#catalog-content"
+							hx-select="#catalog-content"
+							hx-swap="outerHTML"
+							hx-push-url="true"
+						>
+							{ c.Name }
+						</a>
+					}
+				</div>
+			}
+			if len(children) > 0 {
+				<span class="navbar-item px-1">/</span>
+				<div class="navbar-item">
+					<div class="select is-small">
+						<select
+							name="dir"
+							hx-get="/catalog"
+							hx-target="#catalog-content"
+							hx-select="#catalog-content"
+							hx-swap="outerHTML"
+							hx-push-url="true"
+						>
+							<option value="" selected disabled hidden></option>
+							for _, d := range children {
+								<option value={ d.Path }>{ d.Name }</option>
+							}
+						</select>
+					</div>
+				</div>
+			}
+		</div>
+	</nav>
+}

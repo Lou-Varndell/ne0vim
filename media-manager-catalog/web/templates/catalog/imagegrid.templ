@@ -1,0 +1,36 @@
+package catalog
+
+import (
+	"net/url"
+	"strings"
+
+	"media-manager/internal/catalogmodel"
+)
+
+templ ImageGrid(images []catalogmodel.Image) {
+<div class="fixed-grid has-4-cols">
+    <div class="grid">
+        for _, img := range images {
+            <div class="cell">
+                <a href={ templ.URL(viewURL(img.Path)) } target="_blank">
+                    <figure class="image">
+                        <img
+                            src={ img.Thumb }
+                            data-path={ strings.TrimPrefix(img.Path, "/images/") }
+                            loading="lazy"
+                            hx-on:click="navigator.clipboard.writeText(this.dataset.path)"
+                        />
+                    </figure>
+                </a>
+            </div>
+        }
+    </div>
+</div>
+}
+
+// viewURL builds the full-size viewer URL for an image, given img.Path
+// (e.g. "images/sub/photo.jpg").
+func viewURL(imgPath string) string {
+	rel := strings.TrimPrefix(imgPath, "/images/")
+	return "/catalog/view?" + url.Values{"path": {rel}}.Encode()
+}
