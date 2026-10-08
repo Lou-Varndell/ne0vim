@@ -1,0 +1,21 @@
+package catalog
+
+import (
+	"media-site/internal/catalogmodel"
+	layout "media-site/web/templates/layout"
+)
+
+// ImageView renders a single image at its natural size (no scaling), inside
+// a scrollable container for images larger than the viewport. backDir is
+// where "Back to grid" returns to — the image's own containing directory.
+templ ImageView(img catalogmodel.Image, backDir string) {
+	@layout.Base() {
+		<div class="image-view-toolbar">
+			<a class="button is-small" href={ templ.URL("/catalog?dir=" + backDir) }>← Back to grid</a>
+			<button class="button is-small" onclick="window.close()">Close</button>
+		</div>
+		<div class="image-view-scroll">
+			<img src={ img.Path } alt={ img.Name }/>
+		</div>
+	}
+}
