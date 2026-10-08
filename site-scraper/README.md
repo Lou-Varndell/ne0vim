@@ -77,13 +77,6 @@ or run directly with `go run`:
 go run ./cmd/site-scraper -input urls.txt
 ```
 
-**Currently broken:** `cmd/site-scraper` does not compile. `fetch_all.go` calls
-`firstPage(apiURL, query)` with two arguments, but `firstPage` is defined
-taking only one (`apiURL string`). This is a build-time error — it blocks
-`go build`/`go run`/`go vet`/`go test` for the whole `cmd/site-scraper`
-package, not just the `-query` path described below. The `scraper` library
-and `internal/*` packages are unaffected and build/test fine on their own.
-
 ## CLI usage
 
 ```
@@ -102,7 +95,8 @@ Options:
 | `-temp-dir`  | a fresh OS temp directory (`os.MkdirTemp`) | Scratch directory for in-progress downloads. The auto-created default is removed automatically at the end of a run *unless* the run failed or duplicates were found — in either case it's left behind for inspection. A directory you supply explicitly is never touched by cleanup. |
 | `-dest-dir`  | `$HOME/Images/<year>/<month>/<day>/<HHMMSS>` | Directory the deduplicated survivors (and `manifest.json`) are moved into. Created if missing. |
 | `-timeout`   | `0` (no deadline)                       | Overall run deadline (e.g. `5m`, `90s`). Must be `>= 0`. |
-| `-query`     | `"none"` (disabled)                     | **Currently non-functional / WIP — do not use.** See [`-query`: known-broken](#-query-known-broken) below. Note the sentinel default is the literal string `"none"`, not an empty string — passing `-query ""` explicitly *would* activate the broken code path, since the check is `*query != "none"`. |
+| `-query`     | `""` (disabled)                         | Optional JSON `{"apiURL":"...","query":"..."}`. When set, paginates `apiURL` via `fetchAllPics` (batches of 20, deduplicated by `g_url`) and appends the fetched URLs to those read from `-input` before `Run` starts. The request goes through the same SSRF-hardened, rate-limited, retrying client as the rest of the pipeline (see [Security: SSRF hardening](#security-ssrf-hardening)) and is bound by `-timeout`/Ctrl-C like everything else. See [`-query`: usage notes](#-query-usage-notes) below. |
+| `-query-save` | `""` (not saved)                       | Optional path to additionally write the URLs fetched via `-query`, one per line. Ignored if `-query` is unset. |
 
 ### Example
 
@@ -131,32 +125,37 @@ usage error (missing `-input`, `-dest-dir` explicitly cleared, or
 Interrupting with **Ctrl-C** (`SIGINT`) or a **`SIGTERM`** cancels the run's
 context; the CLI reports it distinctly on stderr rather than a generic error.
 
-### `-query`: known-broken
+### `-query`: usage notes
 
-`cmd/site-scraper/fetch_all.go` adds a `-query <term>` flag intended to pull
+`cmd/site-scraper/fetch_all.go` adds a `-query <JSON>` flag that pulls
 additional image URLs from a search API (paginating in batches of 20 via
-`fetchAllPics`/`fetchPics`, deduplicating by `g_url`) and append them to the
-URLs read from `-input` before `Run` starts. **As shipped, it cannot work —
-it doesn't even compile:**
+`fetchAllPics`/`fetchPics`, deduplicating by `g_url`) and appends them to the
+URLs read from `-input` before `Run` starts. It builds, routes its requests
+through `internal/httpx` (SSRF guard, rate limiting, retry/backoff) rather
+than a bare `http.Get`, and is bound by `-timeout`/Ctrl-C/SIGTERM the same as
+the rest of `Run` — but it still assumes a specific, undocumented API shape:
 
-- `fetchAllPics` calls `firstPage(apiURL, query)` with two arguments, but
-  `firstPage` is defined as `func firstPage(apiURL string) ([]PicResult,
-  error)` — one parameter. This is a compile error (`too many arguments in
-  call to firstPage`) that breaks the entire `cmd/site-scraper` package, so
-  nothing in it — including the parts unrelated to `-query` — builds, vets,
-  or tests until it's fixed.
-- Even past that, `main.go` calls `fetchAllPics("", *query)` with the API
-  base URL hardcoded to `""`. `fetchPics` builds the request as `"" +
-  "?offset=...&limit=...&lang=en&q=..."` and passes that to `http.Get`,
-  which would fail immediately with an unsupported-protocol-scheme error —
-  there is no real API endpoint wired in.
-- If it did succeed, the fetched URLs would be written via `writeLines` to a
-  hardcoded path, `/Users/boomer/dev/go/site-scraper/input.txt` — not
-  derived from `-input`, `-dest-dir`, or `$HOME`, and not a path that exists
-  on most machines running this tool.
-
-Fixing it needs: correcting the `firstPage` call arity, a real `apiURL`,
-and a configurable (or removed) output path.
+- `-query`'s value must be a JSON object matching `{"apiURL":"...","query":
+  "..."}` (the fields are the exported `APIURL`/`Query` of an internal
+  `queryRequest` struct) — e.g. `-query
+  '{"apiURL":"https://example.com/search","query":"cats"}'`. Anything that
+  isn't valid JSON fails fast at `json.Unmarshal` before any network call,
+  e.g. `-query 'not-json'` → `parse -query: invalid character ...`, exit 1.
+- `apiURL` is expected to be a search endpoint that: (1) for the first page
+  (offset 0), returns HTML with `<a class="rel-link" href="...">` elements
+  (scraped via `goquery` in `firstPage`), and (2) for every subsequent page,
+  returns a JSON array of `{"g_url": "..."}` objects (`fetchPics`). No such
+  endpoint ships with this repo — this is a hook for an external API the
+  caller supplies, not a working integration out of the box. Pointing it at
+  an arbitrary URL will fail with a 404/unexpected-content error rather than
+  silently doing nothing.
+- Because the request goes through `internal/httpx`'s SSRF-hardened client,
+  pointing `apiURL` at a loopback/private/link-local address is rejected
+  with `refusing to connect to disallowed address ...` rather than actually
+  being dialed — verified against a locally listening port.
+- `-query-save <path>` optionally writes the fetched URLs to `path`, one per
+  line, if you want to persist what `-query` found independently of
+  `-dest-dir`/`manifest.json`. There is no longer a hardcoded output path.
 
 ## The manifest
 
@@ -342,7 +341,7 @@ because `httptest` servers listen on loopback.
 
 ```
 cmd/site-scraper/     CLI entry point (flag parsing, signal handling, summary output)
-  fetch_all.go          -query's search-API pagination (fetchAllPics/fetchPics) — see "-query: known-broken" above
+  fetch_all.go          -query's search-API pagination (fetchAllPics/fetchPics) — see "-query: usage notes" above
 scraper/              Downloader, Option, Run — the pipeline described above
   classify.go           direct-image vs. page detection (HEAD/GET + Content-Type)
   discover.go           HTML parsing for image candidates (goquery)
@@ -359,15 +358,11 @@ internal/
   db/                   DefaultPath (shared ~/.config/inventory-manager/db/inv.db
                         location) + Open, applying the embedded schema.sql,
                         indexes.sql, and migrate.go's column migration
-  store/                typed inserts (AddFile/AddFiles/AddImage) against inv.db
+  store/                typed inserts (AddFile/AddFiles/AddImage/AddOrigin) against inv.db
 ```
 
 ## Known limitations
 
-- **`cmd/site-scraper` doesn't currently build.** A call-arity bug in
-  `fetch_all.go` breaks compilation of the whole CLI package. See
-  [Install / build](#install--build) and
-  [`-query`: known-broken](#-query-known-broken).
 - **Cross-name duplicates aren't detected.** Dedup only compares files that
   share a *logical filename* (then size, then hash). Two files with
   different names but byte-identical content are treated as distinct kept
@@ -377,7 +372,10 @@ internal/
   to other pages looking for more images.
 - **No image transformation.** Bytes are downloaded and moved as-is; no
   resizing, re-encoding, or format conversion.
-- **`-query` doesn't work.** See [`-query`: known-broken](#-query-known-broken).
+- **`-query` has no bundled search API to point it at.** The flag works
+  mechanically (JSON parsing, SSRF-hardened fetch, pagination/dedup), but it
+  assumes a specific external API response shape with no implementation of
+  that API included. See [`-query`: usage notes](#-query-usage-notes).
 
 ## Testing
 
@@ -385,12 +383,12 @@ internal/
 go test ./...
 ```
 
-As of this writing, that fails overall: `cmd/site-scraper` doesn't build
-(see [Install / build](#install--build)), so its package reports `FAIL ...
-[build failed]`. `scraper`, `internal/db`, `internal/httpx`, and
-`internal/manifest` all build and pass independently —
-`go test ./scraper/... ./internal/...` is unaffected by the `cmd` package's
-build error.
+That passes cleanly across the whole module: `scraper`, `internal/db`,
+`internal/httpx`, and `internal/manifest` have test suites and pass;
+`cmd/site-scraper`, `internal/store`, and `internal/textfile` report `[no
+test files]` rather than failing — `cmd/site-scraper` has no tests of its
+own and is exercised indirectly through `scraper`'s test suite, which
+covers the pipeline logic the CLI is a thin wrapper around.
 
 Tests use `httptest` servers and a non-SSRF-filtering client (loopback
 addresses would otherwise be rejected by the production default). Fixtures

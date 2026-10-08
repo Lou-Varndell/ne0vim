@@ -80,6 +80,7 @@ var filesColumns = []struct {
 	{"discovered_at", "DATETIME"},
 	{"status", "TEXT"},
 	{"error", "TEXT"},
+	{"blake3", "TEXT"},
 }
 
 // migrateFilesColumns adds any column in filesColumns missing from an

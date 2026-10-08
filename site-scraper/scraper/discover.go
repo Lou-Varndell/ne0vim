@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -51,7 +52,7 @@ func discoverImageURLs(ctx context.Context, client *http.Client, limiter *rate.L
 
 	addCandidate := func(raw string) {
 		abs := resolve(base, raw)
-		if abs == "" || seen[abs] {
+		if abs == "" || seen[abs] || isSVG(abs) {
 			return
 		}
 		seen[abs] = true
@@ -113,6 +114,17 @@ func parseSrcset(raw string) []string {
 		}
 	}
 	return urls
+}
+
+// isSVG reports whether an absolute URL's path ends in .svg. SVGs are
+// vector markup, not raster image data, so they're excluded from
+// collection.
+func isSVG(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(filepath.Ext(u.Path), ".svg")
 }
 
 // resolve resolves raw against base and returns its absolute form, or ""

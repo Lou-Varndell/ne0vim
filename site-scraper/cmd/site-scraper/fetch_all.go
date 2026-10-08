@@ -1,38 +1,46 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/time/rate"
+
+	"main/internal/httpx"
 )
 
 const batchSize = 20
-
-// const batchSize = 500
 
 type PicResult struct {
 	GURL string `json:"g_url"`
 }
 
-func firstPage(apiURL, query string) ([]PicResult, error) {
+func firstPage(ctx context.Context, client *http.Client, limiter *rate.Limiter, logger *slog.Logger, apiURL, query string) ([]PicResult, error) {
 	endpoint := picsURL(0, batchSize, apiURL, query)
 
-	resp, err := http.Get(endpoint)
+	req, err := httpx.NewRequest(ctx, http.MethodGet, endpoint)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := httpx.Do(ctx, client, limiter, logger, req)
+	if err != nil {
+		return nil, fmt.Errorf("request first page: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, err
+		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
 	var results []PicResult
@@ -45,10 +53,15 @@ func firstPage(apiURL, query string) ([]PicResult, error) {
 	return results, nil
 }
 
-func fetchPics(offset int, apiURL, query string) ([]PicResult, error) {
+func fetchPics(ctx context.Context, client *http.Client, limiter *rate.Limiter, logger *slog.Logger, offset int, apiURL, query string) ([]PicResult, error) {
 	endpoint := picsURL(offset, batchSize, apiURL, query)
 
-	resp, err := http.Get(endpoint)
+	req, err := httpx.NewRequest(ctx, http.MethodGet, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := httpx.Do(ctx, client, limiter, logger, req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching pics: %w", err)
 	}
@@ -76,17 +89,19 @@ func picsURL(offset, limit int, apiURL, query string) string {
 	return apiURL + "?" + q.Encode()
 }
 
-func fetchAllPics(apiURL, query string) ([]PicResult, error) {
+// fetchAllPics paginates apiURL in batchSize-sized batches, deduplicating
+// results by GURL across every page.
+func fetchAllPics(ctx context.Context, client *http.Client, limiter *rate.Limiter, logger *slog.Logger, apiURL, query string) ([]PicResult, error) {
 	seen := make(map[string]struct{})
 	var deduped []PicResult
 
-	pics, err := firstPage(apiURL, query)
+	firstBatch, err := firstPage(ctx, client, limiter, logger, apiURL, query)
 	if err != nil {
 		return nil, fmt.Errorf("fetching first page: %w", err)
 	}
 
 	for offset := 20; ; offset += batchSize {
-		results, err := fetchPics(offset, apiURL, query)
+		results, err := fetchPics(ctx, client, limiter, logger, offset, apiURL, query)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +110,7 @@ func fetchAllPics(apiURL, query string) ([]PicResult, error) {
 			break
 		}
 
-		results = append(results, pics...)
+		results = append(results, firstBatch...)
 
 		for _, pic := range results {
 			if pic.GURL == "" {

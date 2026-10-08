@@ -18,13 +18,18 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/time/rate"
+
+	"main/internal/httpx"
 	"main/internal/textfile"
 	"main/scraper"
 )
 
-type Pics struct {
-	apiURL string
-	query  string
+// queryRequest is the JSON shape -query accepts, e.g.
+// {"apiURL":"https://example.com/search","query":"cats"}.
+type queryRequest struct {
+	APIURL string `json:"apiURL"`
+	Query  string `json:"query"`
 }
 
 func main() {
@@ -51,7 +56,8 @@ func run() int {
 		tempDir   = flag.String("temp-dir", "", "scratch directory for in-progress downloads (default: a fresh OS temp dir, removed unless duplicates were found or the run failed)")
 		destDir   = flag.String("dest-dir", filepath.Join(home, "Images", staging), "directory to move deduplicated images into")
 		timeout   = flag.Duration("timeout", 0, "overall run deadline; must be >= 0, 0 disables the timeout")
-		query     = flag.String("query", "none", "search query for fetching by query (optional)")
+		query     = flag.String("query", "", `optional JSON {"apiURL":"...","query":"..."} to additionally fetch image URLs from a search API before downloading (default: disabled)`)
+		querySave = flag.String("query-save", "", "optional path to additionally save the URLs fetched via -query, one per line (default: not saved)")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -91,28 +97,48 @@ func run() int {
 		return 1
 	}
 
-	if *query != "none" {
-		var ppURLS []string
-		var picsURL Pics
+	// ctx is built before the -query fetch below so that phase is bound by
+	// -timeout and Ctrl-C/SIGTERM the same as the main download run.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-		err := json.Unmarshal([]byte(*query), &picsURL)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "unmarshal query: %v\n", err)
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
+	if *query != "" {
+		var parsedQuery queryRequest
+		if err := json.Unmarshal([]byte(*query), &parsedQuery); err != nil {
+			fmt.Fprintf(os.Stderr, "parse -query: %v\n", err)
 			return 1
 		}
 
-		pics, err := fetchAllPics(picsURL.apiURL, picsURL.query)
+		// Reuses the same SSRF-hardened client/rate-limit shape as the
+		// scraper package (see internal/httpx) rather than an unguarded
+		// http.Get, since -query's apiURL is user-supplied input.
+		client := httpx.NewClient()
+		limiter := rate.NewLimiter(rate.Limit(httpx.Workers), httpx.Workers)
+		logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+		fetched, err := fetchAllPics(ctx, client, limiter, logger, parsedQuery.APIURL, parsedQuery.Query)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "fetch all pics: %v\n", err)
 			return 1
 		}
-		for _, pic := range pics {
-			ppURLS = append(ppURLS, pic.GURL)
+
+		fetchedURLs := make([]string, 0, len(fetched))
+		for _, pic := range fetched {
+			fetchedURLs = append(fetchedURLs, pic.GURL)
 		}
-		urls = append(urls, ppURLS...)
-		if err = writeLines("/Users/boomer/dev/go/site-scraper/input.txt", ppURLS); err != nil {
-			fmt.Fprintf(os.Stderr, "write lines: %v\n", err)
-			return 1
+		urls = append(urls, fetchedURLs...)
+
+		if *querySave != "" {
+			if err := writeLines(*querySave, fetchedURLs); err != nil {
+				fmt.Fprintf(os.Stderr, "write -query-save: %v\n", err)
+				return 1
+			}
 		}
 	}
 
@@ -123,15 +149,6 @@ func run() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configure downloader: %v\n", err)
 		return 1
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if *timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *timeout)
-		defer cancel()
 	}
 
 	manifest, err := d.Run(ctx, urls)

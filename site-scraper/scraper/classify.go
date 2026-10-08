@@ -21,6 +21,8 @@ func classify(ctx context.Context, client *http.Client, limiter *rate.Limiter, l
 	}
 
 	switch {
+	case strings.HasPrefix(ct, "image/svg"):
+		return false, nil
 	case strings.HasPrefix(ct, "image/"):
 		return true, nil
 	case strings.HasPrefix(ct, "text/html"):

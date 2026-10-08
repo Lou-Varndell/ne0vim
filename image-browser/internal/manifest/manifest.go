@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -96,4 +97,34 @@ func InTree(file, baseDir string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// PruneInvalid reports which of entries still belong in a manifest located
+// in dir: an entry is kept only if it names a File (an entry with no File
+// at all has nothing to point at) that is within dir's own tree (see
+// InTree) and that exists on disk. Every entry failing either check is
+// stale — either a leftover from an older version of this program that
+// rewrote a moved entry's File to point outside the manifest's directory
+// instead of removing it, or one whose File has simply been deleted — and
+// is dropped. It returns the kept entries, in their original order, and how
+// many were removed.
+func PruneInvalid(entries []Entry, dir string) (kept []Entry, removed int) {
+	for _, e := range entries {
+		if e.File == "" || !InTree(e.File, dir) {
+			removed++
+			continue
+		}
+
+		path := e.File
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(dir, path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			removed++
+			continue
+		}
+
+		kept = append(kept, e)
+	}
+	return kept, removed
 }
