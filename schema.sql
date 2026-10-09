@@ -29,7 +29,11 @@ CREATE TABLE IF NOT EXISTS files (
     last_verified_at DATETIME,
     missing_since    DATETIME,
 
-    status           TEXT NOT NULL DEFAULT 'processed',
+    -- Set only by a local processing step (e.g. image-browser's `process`
+    -- command recording a decode outcome) — never by import/ingest, which
+    -- records provenance on origins instead. Nullable with no default: a
+    -- plain scan or ingest never touches either column.
+    status           TEXT,
     error            TEXT
 );
 
@@ -139,12 +143,20 @@ CREATE TABLE IF NOT EXISTS media_probe (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS origins (
-    id         INTEGER PRIMARY KEY,
-    type       TEXT NOT NULL,
-    site       TEXT,
-    url        TEXT,
-    identifier TEXT,
-    metadata   TEXT,
+    id            INTEGER PRIMARY KEY,
+    type          TEXT NOT NULL,
+    site          TEXT,
+    url           TEXT,
+    identifier    TEXT,
+    metadata      TEXT,
+
+    -- original_file and discovered_at are manifest.json provenance (the
+    -- pre-collision-resolution filename a scraper run would have given
+    -- this file, and when that run discovered it) — the same two facts a
+    -- file's physical path and files.scanned_at already capture, just
+    -- from the scrape's point of view instead of the filesystem's.
+    original_file TEXT,
+    discovered_at DATETIME,
 
     UNIQUE(site, identifier)
 );
