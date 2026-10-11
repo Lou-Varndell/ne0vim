@@ -41,12 +41,15 @@ func TestSearchRecordsEmptyFilterMatchesEverything(t *testing.T) {
 	createTestFile(t, db, "/photos/a.jpg")
 	createTestFile(t, db, "/photos/b.jpg")
 
-	records, err := searchRecords(ctx, db, Filter{})
+	records, total, err := searchRecords(ctx, db, Filter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("searchRecords: %v", err)
 	}
 	if len(records) != 2 {
 		t.Fatalf("searchRecords(empty) = %d records, want 2", len(records))
+	}
+	if total != 2 {
+		t.Fatalf("searchRecords(empty) total = %d, want 2", total)
 	}
 	if records[0].Path != "/photos/a.jpg" || records[1].Path != "/photos/b.jpg" {
 		t.Fatalf("searchRecords(empty) order = %v, want a.jpg then b.jpg", records)
@@ -67,7 +70,7 @@ func TestSearchRecordsBySite(t *testing.T) {
 		t.Fatalf("setSite: %v", err)
 	}
 
-	records, err := searchRecords(ctx, db, Filter{Site: "example"})
+	records, _, err := searchRecords(ctx, db, Filter{Site: "example"}, 0, 0)
 	if err != nil {
 		t.Fatalf("searchRecords(Site): %v", err)
 	}
@@ -187,7 +190,7 @@ func TestSearchRecordsByTagSubstring(t *testing.T) {
 		t.Fatalf("setTags: %v", err)
 	}
 
-	records, err := searchRecords(ctx, db, Filter{Tag: "vaca"})
+	records, _, err := searchRecords(ctx, db, Filter{Tag: "vaca"}, 0, 0)
 	if err != nil {
 		t.Fatalf("searchRecords(Tag): %v", err)
 	}
@@ -213,7 +216,7 @@ func TestSearchRecordsExcludesDeletedFile(t *testing.T) {
 		t.Fatalf("DeleteFile: %v", err)
 	}
 
-	records, err := searchRecords(ctx, db, Filter{})
+	records, _, err := searchRecords(ctx, db, Filter{}, 0, 0)
 	if err != nil {
 		t.Fatalf("searchRecords: %v", err)
 	}
@@ -223,7 +226,7 @@ func TestSearchRecordsExcludesDeletedFile(t *testing.T) {
 
 	// A tag search for the deleted file's (cascade-removed) tag must not
 	// resurrect it.
-	records, err = searchRecords(ctx, db, Filter{Tag: "keep"})
+	records, _, err = searchRecords(ctx, db, Filter{Tag: "keep"}, 0, 0)
 	if err != nil {
 		t.Fatalf("searchRecords(Tag) after delete: %v", err)
 	}
@@ -238,4 +241,36 @@ func tagNames(tags []*invlib.Tag) []string {
 		names[i] = t.Name
 	}
 	return names
+}
+
+func TestSearchRecordsPagination(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	paths := []string{"/photos/a.jpg", "/photos/b.jpg", "/photos/c.jpg"}
+	for _, p := range paths {
+		createTestFile(t, db, p)
+	}
+
+	page1, total, err := searchRecords(ctx, db, Filter{}, 2, 0)
+	if err != nil {
+		t.Fatalf("searchRecords (page1): %v", err)
+	}
+	if len(page1) != 2 || page1[0].Path != paths[0] || page1[1].Path != paths[1] {
+		t.Fatalf("page1 = %v, want first 2 paths", page1)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3 (ignoring the limit)", total)
+	}
+
+	page2, total, err := searchRecords(ctx, db, Filter{}, 2, 2)
+	if err != nil {
+		t.Fatalf("searchRecords (page2): %v", err)
+	}
+	if len(page2) != 1 || page2[0].Path != paths[2] {
+		t.Fatalf("page2 = %v, want only %s", page2, paths[2])
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
 }

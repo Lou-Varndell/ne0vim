@@ -28,6 +28,14 @@ import (
 // image.
 const imgPerDir = 10
 
+// pageSize caps how many records a single Search loads and renders, so
+// opening the browser (or running a filter) against a database of
+// thousands of images never has to build thousands of Fyne widgets or
+// queue thousands of thumbnail-generation goroutines at once. Browsing a
+// result set larger than one page is done via the Prev/Next page
+// controls rather than by raising this.
+const pageSize = 200
+
 // Browser is the main window's content: a metadata filter bar plus a
 // scrollable thumbnail grid of inventory records matching the current
 // filter. It never scans the filesystem itself — OpenImportDialog is the
@@ -41,6 +49,11 @@ type Browser struct {
 
 	tagFilter  *widget.Entry
 	siteFilter *widget.Entry
+	pathFilter *widget.Entry
+
+	pageLabel   *widget.Label
+	prevPageBtn *widget.Button
+	nextPageBtn *widget.Button
 
 	thumbSize       int
 	thumbCellHeight float32 // thumbnail + label height
@@ -53,6 +66,9 @@ type Browser struct {
 	mu             sync.Mutex
 	loadGeneration int                // bumped on every Search call; lets a superseded search discard its results
 	loadCancel     context.CancelFunc // cancels whichever search is currently in flight
+	filter         Filter             // filter of the most recently completed Search, reused by page navigation
+	page           int                // 0-based page of the most recently completed Search
+	total          int                // total records filter matches, from the most recently completed Search
 }
 
 type thumbnailWidget struct {
@@ -130,7 +146,9 @@ func NewBrowser() *Browser {
 	b.tagFilter.SetPlaceHolder("Tag contains…")
 	b.siteFilter = widget.NewEntry()
 	b.siteFilter.SetPlaceHolder("Site contains…")
-	for _, e := range []*widget.Entry{b.tagFilter, b.siteFilter} {
+	b.pathFilter = widget.NewEntry()
+	b.pathFilter.SetPlaceHolder("Path contains…")
+	for _, e := range []*widget.Entry{b.tagFilter, b.siteFilter, b.pathFilter} {
 		e.OnSubmitted = func(string) { b.searchAsync() }
 	}
 
@@ -142,6 +160,7 @@ func NewBrowser() *Browser {
 	clear := widget.NewButton("Clear", func() {
 		b.tagFilter.SetText("")
 		b.siteFilter.SetText("")
+		b.pathFilter.SetText("")
 		b.searchAsync()
 	})
 
@@ -153,8 +172,24 @@ func NewBrowser() *Browser {
 		b.OpenManageTagsDialog()
 	})
 
-	filters := container.NewGridWithColumns(2, b.tagFilter, b.siteFilter)
-	toolbar := container.NewBorder(nil, nil, nil, container.NewHBox(search, clear, importBtn, manageTagsBtn), filters)
+	refreshThumbsBtn := widget.NewButton("Refresh Thumbnails", func() {
+		b.rebuild(true)
+	})
+
+	filters := container.NewGridWithColumns(3, b.tagFilter, b.siteFilter, b.pathFilter)
+	toolbar := container.NewBorder(
+		nil, nil, nil,
+		container.NewHBox(search, clear, importBtn, manageTagsBtn, refreshThumbsBtn),
+		filters,
+	)
+
+	b.pageLabel = widget.NewLabel("")
+	b.prevPageBtn = widget.NewButton("← Page", func() { b.changePageAsync(-1) })
+	b.nextPageBtn = widget.NewButton("Page →", func() { b.changePageAsync(1) })
+	b.prevPageBtn.Disable()
+	b.nextPageBtn.Disable()
+	pageNav := container.NewHBox(b.prevPageBtn, b.pageLabel, b.nextPageBtn)
+	footer := container.NewBorder(nil, nil, nil, pageNav, b.status)
 
 	sampleLabel := widget.NewLabel("Wg")
 	b.thumbCellHeight = float32(b.thumbSize) + theme.Padding() + sampleLabel.MinSize().Height
@@ -165,7 +200,7 @@ func NewBrowser() *Browser {
 	})
 	b.scroll = container.NewVScroll(b.grid)
 
-	b.root = container.NewBorder(toolbar, b.status, nil, nil, b.scroll)
+	b.root = container.NewBorder(toolbar, footer, nil, nil, b.scroll)
 	return b
 }
 
@@ -236,15 +271,57 @@ func (b *Browser) isCurrentLoad(generation int) bool {
 	return generation == b.loadGeneration
 }
 
-// searchAsync runs Search on a background goroutine, built from the
-// current filter entries, so a slow query never blocks the UI thread.
+// searchAsync runs Search on a background goroutine at page 1, built from
+// the current filter entries, so a slow query never blocks the UI thread.
+// It is for actions that change which filter is active (the Search/Clear
+// buttons, submitting a filter entry) — anywhere the active filter isn't
+// changing should use refreshAsync instead, to avoid surprising the user
+// by resetting their page back to 1.
 func (b *Browser) searchAsync() {
 	filter := Filter{
 		Tag:  strings.TrimSpace(b.tagFilter.Text),
 		Site: strings.TrimSpace(b.siteFilter.Text),
+		Path: strings.TrimSpace(b.pathFilter.Text),
 	}
 	go func() {
-		if err := b.Search(context.Background(), filter); err != nil {
+		if err := b.Search(context.Background(), filter, 0); err != nil {
+			log.Printf("search inventory: %v", err)
+		}
+	}()
+}
+
+// refreshAsync re-runs the most recently completed Search's filter at its
+// same page, for refreshing the grid after a change that doesn't alter
+// which filter is active (editing or deleting a record via the viewer) —
+// unlike searchAsync, it never resets the page back to 1.
+func (b *Browser) refreshAsync() {
+	b.mu.Lock()
+	filter, page := b.filter, b.page
+	b.mu.Unlock()
+	go func() {
+		if err := b.Search(context.Background(), filter, page); err != nil {
+			log.Printf("search inventory: %v", err)
+		}
+	}()
+}
+
+// changePageAsync re-runs the most recently completed Search's filter at
+// page+delta. It is a no-op if the resulting page would be negative or
+// past the last page — Prev/Next are also disabled in that case (see
+// updatePageControls), but changePageAsync guards independently since it
+// can be invoked while a previous search is still in flight.
+func (b *Browser) changePageAsync(delta int) {
+	b.mu.Lock()
+	filter, page, total := b.filter, b.page, b.total
+	b.mu.Unlock()
+
+	page += delta
+	if page < 0 || page*pageSize >= max(total, 1) {
+		return
+	}
+
+	go func() {
+		if err := b.Search(context.Background(), filter, page); err != nil {
 			log.Printf("search inventory: %v", err)
 		}
 	}()
@@ -261,23 +338,30 @@ func (b *Browser) importAsync(dir string) {
 	}()
 }
 
-// Search queries the store for records matching filter and updates the
-// browser's grid with the result. It is safe to call from either a UI
-// callback or a goroutine the caller started; widget updates are
-// marshalled through fyne.Do. If a newer Search/Import call supersedes
-// this one before it finishes, its result is discarded instead of
-// overwriting newer data.
-func (b *Browser) Search(ctx context.Context, filter Filter) error {
+// Search queries the store for page's records (0-based, pageSize per
+// page) matching filter and updates the browser's grid and page controls
+// with the result. It is safe to call from either a UI callback or a
+// goroutine the caller started; widget updates are marshalled through
+// fyne.Do. If a newer Search/Import call supersedes this one before it
+// finishes, its result is discarded instead of overwriting newer data.
+func (b *Browser) Search(ctx context.Context, filter Filter, page int) error {
 	ctx, generation := b.beginLoad(ctx)
 
 	if b.store == nil {
 		if b.isCurrentLoad(generation) {
-			fyne.Do(func() { b.status.SetText("No inventory database available.") })
+			fyne.Do(func() {
+				b.status.SetText("No inventory database available.")
+				b.updatePageControls(0, 0)
+			})
 		}
 		return nil
 	}
 
-	records, err := searchRecords(ctx, b.store, filter)
+	if page < 0 {
+		page = 0
+	}
+
+	records, total, err := searchRecords(ctx, b.store, filter, pageSize, page*pageSize)
 	if err != nil {
 		if b.isCurrentLoad(generation) {
 			fyne.Do(func() { b.status.SetText(err.Error()) })
@@ -290,17 +374,62 @@ func (b *Browser) Search(ctx context.Context, filter Filter) error {
 		b.mu.Unlock()
 		return nil
 	}
+	// A metadata-only edit (site/tags) in the viewer calls refreshAsync,
+	// which re-runs this same filter/page — but site/tags aren't shown in
+	// the grid, so unless the set of files or their order actually
+	// changed, there's nothing for the grid to redraw. Skipping rebuild in
+	// that case avoids tearing down and regenerating every thumbnail on
+	// the page for a change that's visually invisible to it.
+	gridUnchanged := sameFileSequence(b.records, records)
 	b.records = records
+	b.filter = filter
+	b.page = page
+	b.total = total
 	b.mu.Unlock()
 
 	fyne.Do(func() {
 		if !b.isCurrentLoad(generation) {
 			return
 		}
-		b.status.SetText(fmt.Sprintf("%d images", len(records)))
-		b.rebuild(false)
+		b.updatePageControls(page, total)
+		if !gridUnchanged {
+			b.rebuild(false)
+		}
 	})
 	return nil
+}
+
+// sameFileSequence reports whether a and b identify the same files in the
+// same order.
+func sameFileSequence(a, b []imageRecord) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].FileID != b[i].FileID {
+			return false
+		}
+	}
+	return true
+}
+
+// updatePageControls sets the page label (e.g. "Page 3 of 24 (4,712
+// images)") and enables/disables Prev/Next for the given page/total.
+// Must be called on the Fyne event loop.
+func (b *Browser) updatePageControls(page, total int) {
+	totalPages := max((total+pageSize-1)/pageSize, 1)
+	b.pageLabel.SetText(fmt.Sprintf("Page %d of %d (%d images)", page+1, totalPages, total))
+
+	if page > 0 {
+		b.prevPageBtn.Enable()
+	} else {
+		b.prevPageBtn.Disable()
+	}
+	if page+1 < totalPages {
+		b.nextPageBtn.Enable()
+	} else {
+		b.nextPageBtn.Disable()
+	}
 }
 
 // Import recursively scans dir for images, indexes every one found into
@@ -494,6 +623,6 @@ func (b *Browser) openViewer(records []imageRecord, index int) {
 		return
 	}
 
-	v := newViewer(b.win, b.store, records, index, func() { b.searchAsync() })
+	v := newViewer(b.win, b.store, records, index, func() { b.refreshAsync() })
 	v.Show()
 }

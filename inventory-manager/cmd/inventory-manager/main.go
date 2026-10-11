@@ -63,7 +63,7 @@ func main() {
 		dialog.ShowError(fmt.Errorf("inventory database unavailable: %w", err), w)
 	} else {
 		go func() {
-			if err := browser.Search(ctx, ui.Filter{}); err != nil {
+			if err := browser.Search(ctx, ui.Filter{}, 0); err != nil {
 				log.Printf("load inventory: %v", err)
 				fyne.Do(func() {
 					dialog.ShowError(fmt.Errorf("could not load inventory: %w", err), w)

@@ -73,10 +73,15 @@ func newViewer(parent fyne.Window, store *invlib.DB, records []imageRecord, inde
 	deleteRecord := widget.NewButton("Delete Record", func() { v.deleteCurrent() })
 	deleteRecord.Importance = widget.DangerImportance
 
-	metadata := container.NewVBox(
-		widget.NewLabel("Site:"), v.siteEntry,
-		widget.NewLabel("Tags:"), v.tagsEntry,
-		container.NewHBox(save, deleteRecord, v.saveStatus),
+	// Left: metadata controls.
+	// Right: image viewer.
+	metadataPanel := container.NewVBox(
+		widget.NewLabel("Site:"),
+		v.siteEntry,
+		widget.NewLabel("Tags:"),
+		v.tagsEntry,
+		container.NewHBox(save, deleteRecord),
+		v.saveStatus,
 	)
 
 	prev := widget.NewButton("← Previous", func() { v.move(-1) })
@@ -94,11 +99,23 @@ func newViewer(parent fyne.Window, store *invlib.DB, records []imageRecord, inde
 		fyne.CurrentApp().Clipboard().SetContent(v.records[v.index].Path)
 	})
 
-	toolbar := container.NewBorder(nil, nil, prev, container.NewHBox(backToGrid, copyPath, open, next), v.info)
+	toolbar := container.NewBorder(
+		nil,
+		nil,
+		prev,
+		container.NewHBox(backToGrid, copyPath, open, next),
+		v.info,
+	)
+
+	content := container.NewHSplit(metadataPanel, v.imageTap)
+	content.SetOffset(0.28) // Metadata gets 28% of the width.
+
 	v.container = container.NewBorder(
-		container.NewVBox(toolbar, metadata),
-		nil, nil, nil,
-		v.imageTap,
+		toolbar,
+		nil,
+		nil,
+		nil,
+		content,
 	)
 
 	v.win = fyne.CurrentApp().NewWindow("Image Viewer")

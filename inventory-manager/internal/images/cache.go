@@ -1,8 +1,6 @@
 package images
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -16,9 +14,13 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-// Cache stores JPEG thumbnails on disk, keyed by the hash of the source
-// image's path, so repeated views of the same directory can skip re-decoding
-// and re-resizing full-size images.
+// Cache stores JPEG thumbnails on disk, keyed by the BLAKE3 content hash
+// of the source image (see Hash) rather than its path, so repeated views
+// of the same image skip re-decoding and re-resizing full-size images —
+// and a moved or renamed source image still finds its existing thumbnail.
+// This is the same hash image-browser keys its own thumbnail cache by and
+// invlib stores in files.hash, so the two tools' caches agree on identity
+// for any image they both see.
 type Cache struct {
 	Dir  string
 	Size uint
@@ -39,15 +41,16 @@ func NewCache(size uint) (*Cache, error) {
 	return &Cache{Dir: dir, Size: size}, nil
 }
 
-func (c *Cache) key(path string) string {
-	sum := sha256.Sum256([]byte(path))
-	return hex.EncodeToString(sum[:]) + ".jpg"
-}
-
 // Path returns the on-disk cache path a thumbnail for path would be (or is)
-// stored at, whether or not it has been generated yet.
-func (c *Cache) Path(path string) string {
-	return filepath.Join(c.Dir, c.key(path))
+// stored at, whether or not it has been generated yet. Since the cache key
+// is path's own content hash (see Hash), this reads path to compute it —
+// a missing or unreadable file surfaces here rather than later in Generate.
+func (c *Cache) Path(path string) (string, error) {
+	hash, err := Hash(path)
+	if err != nil {
+		return "", fmt.Errorf("hash %q: %w", path, err)
+	}
+	return filepath.Join(c.Dir, hash+".jpg"), nil
 }
 
 // Generate returns the path to a cached thumbnail for path. If a thumbnail
@@ -56,7 +59,10 @@ func (c *Cache) Path(path string) string {
 // its own, so routine loads (opening a directory, drilling into a preview
 // row, scrolling) never pay to regenerate thumbnails that are already there.
 func (c *Cache) Generate(path string, force bool) (string, error) {
-	dst := c.Path(path)
+	dst, err := c.Path(path)
+	if err != nil {
+		return "", err
+	}
 
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
@@ -81,7 +87,7 @@ func (c *Cache) Generate(path string, force bool) (string, error) {
 	// means two concurrent Generate calls for the same path never share —
 	// and truncate — each other's file; the rename below is what makes the
 	// final write atomic.
-	out, err := os.CreateTemp(c.Dir, c.key(path)+".*.tmp")
+	out, err := os.CreateTemp(c.Dir, filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}

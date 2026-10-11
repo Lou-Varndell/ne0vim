@@ -29,21 +29,42 @@ type imageRecord struct {
 type Filter struct {
 	Site string
 	Tag  string
+	Path string
 }
 
-// searchRecords returns every image record matching filter, ordered by
-// path, with each record's Tags populated. An empty filter matches every
-// indexed image. Only files with an images row (i.e. recognized as images,
-// per schema.sql) are returned — this app never displays videos or audio.
-func searchRecords(ctx context.Context, db *invlib.DB, filter Filter) ([]imageRecord, error) {
-	results, err := db.ListFileRecords(ctx, invlib.FileQuery{
+// searchRecords returns up to limit image records matching filter,
+// skipping the first offset matches, ordered by path, with each record's
+// Tags populated — plus the total number of records filter matches,
+// ignoring limit/offset, so callers can show "page X of Y" without
+// fetching every matching row. A limit of 0 means no limit: every
+// matching record is returned, and total equals len(records). An empty
+// filter matches every indexed image. Only files with an images row (i.e.
+// recognized as images, per schema.sql) are returned — this app never
+// displays videos or audio.
+func searchRecords(ctx context.Context, db *invlib.DB, filter Filter, limit, offset int) ([]imageRecord, int, error) {
+	query := invlib.FileQuery{
 		Site:         filter.Site,
 		Tag:          filter.Tag,
+		Path:         filter.Path,
 		RequireImage: true,
 		WithTags:     true,
+		Limit:        limit,
+		Offset:       offset,
+	}
+
+	total, err := db.CountFileRecords(ctx, invlib.FileQuery{
+		Site:         filter.Site,
+		Tag:          filter.Tag,
+		Path:         filter.Path,
+		RequireImage: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("search records: %w", err)
+		return nil, 0, fmt.Errorf("search records: count: %w", err)
+	}
+
+	results, err := db.ListFileRecords(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search records: %w", err)
 	}
 
 	records := make([]imageRecord, len(results))
@@ -66,7 +87,7 @@ func searchRecords(ctx context.Context, db *invlib.DB, filter Filter) ([]imageRe
 		}
 		records[i] = rec
 	}
-	return records, nil
+	return records, total, nil
 }
 
 // setSite attaches site as fileID's origin: creating a new "manual" origin

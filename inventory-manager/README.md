@@ -46,8 +46,11 @@ database file:
 
     ./inventory-manager -db /path/to/other.db
 
-The thumbnail cache is automatically invalidated when the source image is
-newer than the cached thumbnail.
+Once a thumbnail is cached it is reused on every later view — opening a
+directory, paging through results, or re-opening the viewer never pays to
+regenerate it. There is no automatic invalidation if a source image
+changes on disk; use the toolbar's "Refresh Thumbnails" button to force
+regeneration for the images currently on screen.
 
 The inventory database defaults to
 `$XDG_CONFIG_HOME/inventory-manager/inventory.db` (or the platform
