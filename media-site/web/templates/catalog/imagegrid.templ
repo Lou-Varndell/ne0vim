@@ -1,0 +1,64 @@
+package catalog
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"media-site/internal/catalogmodel"
+)
+
+templ ImageGrid(dir string, batch catalogmodel.ImageBatch) {
+<div class="fixed-grid has-4-cols">
+    <div class="grid">
+        @ImageGridItems(dir, batch)
+    </div>
+</div>
+}
+
+// ImageGridItems renders one batch of image cells and, if more images
+// remain beyond this batch, a trailing sentinel cell that fetches the next
+// batch once scrolled into view and replaces itself with the result —
+// which is this same fragment again, continuing the chain. It's rendered
+// both inside ImageGrid for the initial page load and bare by the
+// /catalog/images/more handler for every infinite-scroll continuation.
+templ ImageGridItems(dir string, batch catalogmodel.ImageBatch) {
+    for _, img := range batch.Images {
+        <div class="cell">
+            <a href={ templ.URL(viewURL(img.Path)) } target="_blank">
+                <figure class="image">
+                    <img
+                        src={ img.Thumb }
+                        data-path={ strings.TrimPrefix(img.Path, "/images/") }
+                        loading="lazy"
+                        hx-on:click="navigator.clipboard.writeText(this.dataset.path)"
+                    />
+                </figure>
+            </a>
+        </div>
+    }
+    if batch.HasMore {
+        <div
+            class="cell scroll-sentinel"
+            hx-get={ moreURL(dir, batch.NextOffset) }
+            hx-trigger="revealed"
+            hx-swap="outerHTML"
+        ></div>
+    }
+}
+
+// viewURL builds the full-size viewer URL for an image, given img.Path
+// (e.g. "images/sub/photo.jpg").
+func viewURL(imgPath string) string {
+	rel := strings.TrimPrefix(imgPath, "/images/")
+	return "/catalog/view?" + url.Values{"path": {rel}}.Encode()
+}
+
+// moreURL builds the infinite-scroll continuation URL for dir, resuming
+// after offset images.
+func moreURL(dir string, offset int) string {
+	return "/catalog/images/more?" + url.Values{
+		"dir":    {dir},
+		"offset": {fmt.Sprint(offset)},
+	}.Encode()
+}
