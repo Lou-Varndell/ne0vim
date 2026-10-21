@@ -1,0 +1,52 @@
+/* Project-specific overrides on top of Bulma */
+
+.image-view-toolbar {
+	position: sticky;
+	top: 0;
+	display: flex;
+	gap: 0.5rem;
+	padding: 0.5rem;
+	background: #fff;
+	border-bottom: 1px solid #dbdbdb;
+}
+
+.image-view-scroll {
+	overflow: auto;
+	padding: 1rem;
+}
+
+.image-view-scroll img {
+	display: block;
+}
+
+/* Infinite-scroll sentinel: a full-width, effectively invisible cell so it
+   never reads as a stray empty thumbnail at the end of the grid. */
+.scroll-sentinel {
+	grid-column: 1 / -1;
+	height: 1px;
+	padding: 0 !important;
+}
+
+/* Left-edge flyout panel (see flyout.js): docked off-screen until the
+   mouse hovers the viewport's far-left edge, then slides in over the
+   page content. */
+.flyout-panel {
+	position: fixed;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 300px;
+	max-width: 80vw;
+	overflow-y: auto;
+	background: #fff;
+	padding: 1rem;
+	border-right: 1px solid #dbdbdb;
+	box-shadow: 2px 0 8px rgba(10, 10, 10, 0.15);
+	transform: translateX(-100%);
+	transition: transform 0.15s ease-out;
+	z-index: 100;
+}
+
+.flyout-panel.is-open {
+	transform: translateX(0);
+}

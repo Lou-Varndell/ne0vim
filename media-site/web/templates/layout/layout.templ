@@ -1,0 +1,27 @@
+package layout
+
+// Base wraps every page with shared chrome: Bulma/htmx, and the left-edge
+// flyout panel (see /static/js/flyout.js) that's available regardless of
+// which page is open. The panel finds the current directory itself, from
+// whichever descendant element carries a data-dir attribute (the catalog
+// page's #catalog-content, or the image viewer's #page-content) — so Base
+// stays the same for every page instead of threading a dir parameter
+// through each one.
+templ Base() {
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>Media Site</title>
+		<link rel="stylesheet" href="/static/css/bulma.min.css"/>
+		<link rel="stylesheet" href="/static/css/app.css"/>
+		<script src="/static/js/htmx.min.js"></script>
+	</head>
+	<body>
+		{ children... }
+		<aside id="flyout-panel" class="flyout-panel" aria-label="Catalog info"></aside>
+		<script src="/static/js/flyout.js"></script>
+	</body>
+	</html>
+}
