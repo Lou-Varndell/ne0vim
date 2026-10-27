@@ -1,0 +1,59 @@
+/* High-contrast dark theme and intrinsic-size media grid. */
+:root {
+  color-scheme: dark;
+  --app-bg: #101216;
+  --app-surface: #191d24;
+  --app-input: #111419;
+  --app-border: #515b6b;
+  --app-text: #f2f4f8;
+  --app-muted: #c5ccd8;
+  --app-accent: #536dfe;
+}
+
+html, body { min-height: 100%; background: var(--app-bg); color: var(--app-text); }
+body, .title, .subtitle, .content, .menu-label, .label, .help, strong,
+.pagination, .breadcrumb, .navbar, .card, .box { color: var(--app-text); }
+a { color: #a9b8ff; }
+a:hover { color: #d0d7ff; }
+
+/* Left-edge flyout: hidden off-screen until flyout.js adds .is-open. */
+.flyout-panel {
+  position: fixed !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: auto !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  width: 300px !important;
+  min-width: 0 !important;
+  max-width: 80vw !important;
+  overflow-y: auto;
+  padding: 1rem;
+  background: var(--app-surface);
+  color: var(--app-text);
+  border-right: 1px solid var(--app-border);
+  box-shadow: 2px 0 12px rgba(0,0,0,.5);
+  transform: translateX(-100%);
+  transition: transform 0.15s ease-out;
+  z-index: 1000;
+}
+.flyout-panel.is-open { transform: translateX(0) !important; }
+.flyout-panel .menu-label, .flyout-panel .label, .flyout-panel p { color: var(--app-muted); }
+.input, .textarea, .select select, .button:not(.is-link):not(.is-primary) { background-color: var(--app-input); color: var(--app-text); border-color: var(--app-border); }
+.input::placeholder, .textarea::placeholder { color: #aeb7c6; opacity: 1; }
+.input:focus, .textarea:focus, .select select:focus { border-color: #9eafff; box-shadow: 0 0 0 2px rgba(158,175,255,.28); }
+.input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
+.button.is-link { background: var(--app-accent); color: #fff; }
+.button.is-link:hover { background: #6a80ff; color: #fff; }
+
+.image-view-toolbar { position: sticky; top: 0; display: flex; gap: .5rem; padding: .5rem; background: var(--app-surface); color: var(--app-text); border-bottom: 1px solid var(--app-border); }
+.image-view-scroll { overflow: auto; padding: 1rem; }
+.image-view-scroll img { display: block; width: auto; height: auto; max-width: none; }
+
+/* Use cached thumbnails in the grid and preserve their intrinsic pixel dimensions. */
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, max-content); align-items: start; justify-content: start; gap: 1rem; }
+.media-grid .cell { width: max-content; min-width: 0; padding: 0; }
+.media-grid .cell > a { display: inline-block; width: max-content; height: auto; line-height: 0; }
+.media-grid img.grid-thumbnail { display: block; width: auto !important; height: auto !important; max-width: none !important; max-height: none !important; object-fit: none !important; }
+.scroll-sentinel { grid-column: 1 / -1; height: 1px; padding: 0 !important; }
